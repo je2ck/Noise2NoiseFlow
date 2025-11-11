@@ -55,5 +55,5 @@ python train_dncnn_noise2noise.py --sidd_path '../_Data/SIDD_Full/' --swap_image
 
 # atom 
 python train_atom.py --arch "unc|unc|unc|unc|gain|unc|unc|unc|unc"      --sidd_path './data' \
-	--epochs 2000  --n_batch_train 138 --n_batch_test 138  --n_patches_per_image 2898 --patch_height 32 --patch_sampling uniform  \
-	--n_channels 4 --epochs_full_valid 10 --lu_decomp --logdir n2nf --lmbda 262144 --no_resume
+	--epochs 2000  --n_batch_train 138 --n_batch_test 138  --n_patches_per_image 1 --patch_height 128 --patch_sampling uniform  \
+	--n_channels 3 --epochs_full_valid 10 --lu_decomp --logdir n2nf --lmbda 262144 --no_resume

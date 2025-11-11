@@ -129,8 +129,8 @@ def main(hps):
     hps.model_save_dir = os.path.join(hps.logdir, 'saved_models')
     
     hps.param_inits = init_params()
-    n2nflow = Noise2NoiseFlow(x_shape[1:], arch=hps.arch, flow_permutation=hps.flow_permutation, param_inits=hps.param_inits, 
-        lu_decomp=hps.lu_decomp, denoiser_model=hps.denoiser, dncnn_num_layers=9, lmbda=hps.lmbda)
+    n2nflow = Noise2NoiseFlow(x_shape[1:], arch=hps.arch, flow_permutation=hps.flow_permutation, param_inits=hps.param_inits,
+        lu_decomp=hps.lu_decomp, denoiser_model=hps.denoiser, dncnn_num_layers=9, lmbda=hps.lmbda, device=hps.device)
 
     if hps.pretrained_denoiser:
         if hps.denoiser == 'dncnn':

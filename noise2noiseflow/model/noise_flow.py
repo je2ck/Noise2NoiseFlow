@@ -11,12 +11,13 @@ from model.flow_layers.utils import SdnModelScale
 
 class NoiseFlow(nn.Module):
 
-    def __init__(self, x_shape, arch, flow_permutation, param_inits, lu_decomp):
+    def __init__(self, x_shape, arch, flow_permutation, param_inits, lu_decomp, device='cuda', *_, **__):
         super(NoiseFlow, self).__init__()
         self.arch = arch
         self.flow_permutation = flow_permutation
         self.param_inits = param_inits
         self.decomp = lu_decomp
+        self.device = device
         self.model = nn.ModuleList(self.noise_flow_arch(x_shape))
 
     def noise_flow_arch(self, x_shape):
@@ -47,7 +48,8 @@ class NoiseFlow(nn.Module):
                     AffineCoupling(
                         x_shape=x_shape,
                         shift_and_log_scale=ShiftAndLogScale,
-                        name='unc_%d' % i
+                        name='unc_%d' % i,
+                        device=self.device
                     )
                 )
             # elif lyr == 'lt':
@@ -70,7 +72,7 @@ class NoiseFlow(nn.Module):
             elif lyr == 'gain':
                 print('|-Gain')
                 bijectors.append(
-                    Gain(name='gain_%d' % i)
+                    Gain(name='gain_%d' % i, device=self.device)
                 )
 
         return bijectors

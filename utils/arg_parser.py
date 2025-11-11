@@ -7,7 +7,7 @@ def arg_parser():
     parser.add_argument("--logdir", type=str,
                         default='./logdir/', help="Location to save logs")
     parser.add_argument("--sidd_path", type=str,
-                        default='./data/SIDD_Medium_Raw/Data', help="Location of the SIDD dataset")
+                        default='./data', help="Location of the SIDD dataset")
     parser.add_argument("--n_train", type=int,
                         default=50000, help="Train epoch size")
     parser.add_argument("--n_test", type=int,

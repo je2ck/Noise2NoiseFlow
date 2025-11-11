@@ -52,3 +52,8 @@ python train_noise_flow.py --arch "sdn|unc|unc|unc|unc|gain|unc|unc|unc|unc" \
 # --swap_images: whether to give both (I_1, I_2) and (I_2, I_1) as training pairs to the model or just (I_1, I_2). For a better performance, always set it to True.
 
 python train_dncnn_noise2noise.py --sidd_path '../_Data/SIDD_Full/' --swap_images --logdir test
+
+# atom 
+python train_atom.py --arch "unc|unc|unc|unc|gain|unc|unc|unc|unc"      --sidd_path './data' \
+	--epochs 2000  --n_batch_train 138 --n_batch_test 138  --n_patches_per_image 2898 --patch_height 32 --patch_sampling uniform  \
+	--n_channels 4 --epochs_full_valid 10 --lu_decomp --logdir n2nf --lmbda 262144 --no_resume

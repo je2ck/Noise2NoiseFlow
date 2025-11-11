@@ -341,6 +341,7 @@ def build_model_and_optimizer(hps) -> Tuple[Noise2NoiseFlow, torch.optim.Optimiz
         denoiser_model=hps.denoiser,
         dncnn_num_layers=9,
         lmbda=hps.lmbda,
+        device=hps.device,
     )
 
     if getattr(hps, 'pretrained_denoiser', False):

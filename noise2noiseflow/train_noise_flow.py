@@ -120,7 +120,7 @@ def main(hps):
     hps.model_save_dir = os.path.join(hps.logdir, 'saved_models')
     
     hps.param_inits = init_params()
-    nf = NoiseFlow(x_shape[1:], hps.arch, hps.flow_permutation, hps.param_inits, hps.lu_decomp)
+    nf = NoiseFlow(x_shape[1:], hps.arch, hps.flow_permutation, hps.param_inits, hps.lu_decomp, device=hps.device)
     nf.to(hps.device)
 
     optimizer = torch.optim.Adam(nf.parameters(), lr=hps.lr, betas=(0.9, 0.999), eps=1e-08)

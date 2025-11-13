@@ -70,7 +70,7 @@ def arg_parser():
 
     parser.add_argument("--alpha", type=float, default=4, help="Alpha parameter in recorruption")
     parser.add_argument("--sigma", type=float, default=1/256, help="std of the zero mean noise vector z for recorruption")
-    parser.add_argument("--pretrained_denoiser", default=True)
+    parser.add_argument("--pretrained_denoiser", default=False)
     
     hps = parser.parse_args()  # So error if typo
     return hps

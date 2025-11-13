@@ -42,7 +42,15 @@ def _load_tif(path: str) -> torch.Tensor:
             array = np.array(img)
     logging.trace("Loaded TIFF %s with shape %s and dtype %s", path, array.shape, array.dtype)
     if array.ndim == 2:
-        array = array[:, :, None]
+        array = array[:, :, None]          # (H, W) → (H, W, 1)
+    elif array.ndim == 3:
+        # If first dimension is small → probably channel-first (CHW)
+        if array.shape[0] <= 4:
+            array = np.transpose(array, (0, 1, 2))   # do nothing (CHW)
+        else:
+            array = np.transpose(array, (2, 0, 1))   # HWC → CHW
+    else:
+        raise ValueError(f"Unsupported TIFF shape: {array.shape}")
     dtype = array.dtype
     array = array.astype(np.float32)
     if np.issubdtype(dtype, np.integer):
@@ -53,6 +61,18 @@ def _load_tif(path: str) -> torch.Tensor:
     array = np.transpose(array, (2, 0, 1))
     logging.trace("Normalized TIFF %s to tensor shape %s", path, array.shape)
     return torch.from_numpy(array)
+
+def _ensure_channels(x: torch.Tensor, C: int) -> torch.Tensor:
+    """
+    x: (C,H,W) 텐서. 1채널이면 C로 반복 복제, C보다 크면 앞 C개만 사용.
+    """
+    if x.dim() == 2:  # (H,W)면 (1,H,W)로
+        x = x.unsqueeze(0)
+    if x.size(0) == 1 and C > 1:
+        x = x.repeat(C, 1, 1)
+    elif x.size(0) > C:
+        x = x[:C]
+    return x
 
 
 def _crop_pair(noisy: torch.Tensor, clean: torch.Tensor, patch: int, stage: str) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -73,7 +93,7 @@ def _crop_pair(noisy: torch.Tensor, clean: torch.Tensor, patch: int, stage: str)
 
 
 class PairedTifPatchDataset(Dataset):
-    def __init__(self, root_dir: str, stage: str, patch_size: int = None, patches_per_image: int = 1):
+    def __init__(self, root_dir: str, stage: str, patch_size: int = None, patches_per_image: int = 1, desired_channels: int = 2):
         self.root_dir = root_dir
         self.stage = stage
         self.patch_size = patch_size
@@ -88,6 +108,7 @@ class PairedTifPatchDataset(Dataset):
         if not self.samples:
             raise FileNotFoundError(f'No tif pairs found under {self.root_dir}')
         self.length = len(self.samples) * self.patches_per_image
+        self.desired_channels = max(2, int(desired_channels))
         logging.info("Initialized %s dataset at %s with %d scenes (patches per image=%d)", stage, root_dir, len(self.samples), self.patches_per_image)
 
     def __len__(self) -> int:
@@ -101,6 +122,9 @@ class PairedTifPatchDataset(Dataset):
         noisy = _load_tif(noisy_path)
         clean = _load_tif(clean_path)
         noisy, clean = _crop_pair(noisy, clean, self.patch_size, self.stage)
+        
+        noisy = _ensure_channels(noisy, self.desired_channels)
+        clean = _ensure_channels(clean, self.desired_channels)
 
         if self.stage in ('train', 'val'):
             return {
@@ -127,7 +151,7 @@ def save_checkpoint(model: torch.nn.Module, optimizer: torch.optim.Optimizer, ep
 
 def load_checkpoint(model: torch.nn.Module, optimizer: torch.optim.Optimizer, checkpoint_dir: str):
     """Load training checkpoint and restore model/optimizer state."""
-    checkpoint = torch.load(checkpoint_dir)
+    checkpoint = torch.load(checkpoint_dir, map_location=hps.device)
     model.load_state_dict(checkpoint['state_dict'])
     optimizer.load_state_dict(checkpoint['optimizer'])
     logging.info("Checkpoint loaded from %s (epoch %d)", checkpoint_dir, checkpoint['epoch_num'])
@@ -336,11 +360,11 @@ def build_model_and_optimizer(hps) -> Tuple[Noise2NoiseFlow, torch.optim.Optimiz
     if getattr(hps, 'pretrained_denoiser', False):
         if hps.denoiser == 'dncnn':
             checkpoint_dir = '../denoisers/DnCNN_pretrained.pth'
-            checkpoint = torch.load(checkpoint_dir)
+            checkpoint = torch.load(checkpoint_dir, map_location=hps.device)
             model.denoiser.load_state_dict(checkpoint)
         elif hps.denoiser == 'unet':
             checkpoint_dir = '../denoisers/UNet_pretrained.pth'
-            checkpoint = torch.load(checkpoint_dir)
+            checkpoint = torch.load(checkpoint_dir, map_location=hps.device)
             model.denoiser.load_state_dict(checkpoint)
 
     model.to(hps.device)

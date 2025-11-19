@@ -40,7 +40,7 @@ def _load_tif(path: str) -> torch.Tensor:
     else:
         with Image.open(path) as img:
             array = np.array(img)
-    logging.trace("Loaded TIFF %s with shape %s and dtype %s", path, array.shape, array.dtype)
+    logging.debug("Loaded TIFF %s with shape %s and dtype %s", path, array.shape, array.dtype)
     if array.ndim == 2:
         array = array[:, :, None]          # (H, W) → (H, W, 1)
     elif array.ndim == 3:
@@ -59,7 +59,7 @@ def _load_tif(path: str) -> torch.Tensor:
             array /= float(info.max)
     array = np.clip(array, 0.0, 1.0)
     array = np.transpose(array, (2, 0, 1))
-    logging.trace("Normalized TIFF %s to tensor shape %s", path, array.shape)
+    logging.debug("Normalized TIFF %s to tensor shape %s", path, array.shape)
     return torch.from_numpy(array)
 
 def _ensure_channels(x: torch.Tensor, C: int) -> torch.Tensor:
@@ -77,7 +77,7 @@ def _ensure_channels(x: torch.Tensor, C: int) -> torch.Tensor:
 
 def _crop_pair(noisy: torch.Tensor, clean: torch.Tensor, patch: int, stage: str) -> Tuple[torch.Tensor, torch.Tensor]:
     if patch is None:
-        logging.trace("Stage %s using full image crop", stage)
+        logging.debug("Stage %s using full image crop", stage)
         return noisy, clean
     _, h, w = noisy.shape
     if patch > h or patch > w:
@@ -88,7 +88,7 @@ def _crop_pair(noisy: torch.Tensor, clean: torch.Tensor, patch: int, stage: str)
     else:
         top = (h - patch) // 2
         left = (w - patch) // 2
-    logging.trace("Stage %s crop window top=%d left=%d size=%d", stage, top, left, patch)
+    logging.debug("Stage %s crop window top=%d left=%d size=%d", stage, top, left, patch)
     return noisy[:, top:top + patch, left:left + patch], clean[:, top:top + patch, left:left + patch]
 
 
@@ -118,7 +118,7 @@ class PairedTifPatchDataset(Dataset):
         scene_idx = idx // self.patches_per_image
         noisy_path, clean_path = self.samples[scene_idx]
         if idx % max(self.patches_per_image, 1) == 0:
-            logging.trace("Loading scene %d (%s, %s) for stage %s", scene_idx, noisy_path, clean_path, self.stage)
+            logging.debug("Loading scene %d (%s, %s) for stage %s", scene_idx, noisy_path, clean_path, self.stage)
         noisy = _load_tif(noisy_path)
         clean = _load_tif(clean_path)
         noisy, clean = _crop_pair(noisy, clean, self.patch_size, self.stage)
@@ -168,7 +168,7 @@ def init_params():
     cam_params_i = np.ndarray([npcam, 5])
     cam_params_i[:, :] = 1.0
 
-    logging.trace(
+    logging.debug(
         "Camera params initialized (c=%.3f, beta1=%.3f, beta2=%.3f)",
         c_i,
         beta1_i,
@@ -178,9 +178,9 @@ def init_params():
 
 
 def setup_logging() -> None:
-    """Configure root logger with a readable format and custom TRACE level."""
+    """Configure root logger with a readable format and custom DEBUG level."""
     try:
-        add_logging_level('TRACE', logging.DEBUG - 5)
+        add_logging_level('DEBUG', logging.DEBUG - 5)
     except AttributeError:
         # Level already exists; ignore
         pass
@@ -199,7 +199,7 @@ def setup_device_and_seed(hps) -> None:
     np.random.seed(hps.seed)
 
     hps.n_bins = 2.0 ** hps.n_bits_x
-    logging.trace('Num GPUs Available: %s' % torch.cuda.device_count())
+    logging.debug('Num GPUs Available: %s' % torch.cuda.device_count())
     hps.device = 'cuda' if torch.cuda.device_count() else 'cpu'
     logging.info(
         "Seed set to %d | device=%s | n_bins=%.0f",
@@ -306,8 +306,8 @@ def _build_custom_dataloaders(hps) -> Tuple[DataLoader, DataLoader, DataLoader, 
     hps.raw = False
     hps.n_channels = x_shape[1]
 
-    logging.trace('# training scenes (custom) = {}'.format(hps.n_tr_inst))
-    logging.trace('# validation scenes (custom) = {}'.format(len(val_dataset.samples)))
+    logging.debug('# training scenes (custom) = {}'.format(hps.n_tr_inst))
+    logging.debug('# validation scenes (custom) = {}'.format(len(val_dataset.samples)))
     logging.info(
         "Custom loaders ready | train=%d (patches=%d) | val=%d | test=%d | batch=%d/%d",
         hps.n_tr_inst,
@@ -330,7 +330,7 @@ def compute_patch_stats_and_baselines(hps, test_loader: DataLoader, x_shape: Tup
         logging.info('Skipping SIDD baseline stats for custom dataset')
         return {'sc_in_sd': None}, 0.0, 0.0
 
-    logging.trace('calculating data stats and baselines...')
+    logging.debug('calculating data stats and baselines...')
     pat_stats_calculator = PatchStatsCalculator(
         test_loader, x_shape[-1], n_channels=hps.n_channels, save_dir=hps.logdir, file_postfix=''
     )
@@ -407,7 +407,7 @@ def try_resume(hps, model: Noise2NoiseFlow, optimizer: torch.optim.Optimizer) ->
         saved_model_file_path = os.path.join(hps.model_save_dir, saved_model_file_name)
         model, optimizer, start_epoch = load_checkpoint(model, optimizer, saved_model_file_path)
         start_epoch = int(start_epoch) + 1
-        logging.trace('found an existing previous checkpoint, resuming from epoch {}'.format(start_epoch))
+        logging.debug('found an existing previous checkpoint, resuming from epoch {}'.format(start_epoch))
     else:
         # No prior checkpoints
         start_epoch = 1
@@ -750,8 +750,8 @@ def run_training(hps) -> None:
 
     setup_device_and_seed(hps)
     prepare_logdirs(hps)
-    logging.trace('Data root = %s' % hps.sidd_path)
-    logging.trace('Logging to ' + hps.logdir)
+    logging.debug('Data root = %s' % hps.sidd_path)
+    logging.debug('Logging to ' + hps.logdir)
     if hps.dataset_kind == 'custom' and 'sdn' in (hps.arch or ''):
         logging.warning('Custom dataset detected but architecture includes "sdn" layers; ensure the model does not require ISO/CAM metadata.')
 
@@ -902,7 +902,7 @@ def main(hps):
     run_training(hps)
     total_time = time.time() - total_time
     logging.info('Training finished in %.1fs', total_time)
-    logging.trace("Finished!")
+    logging.debug("Finished!")
 
 
 if __name__ == "__main__":

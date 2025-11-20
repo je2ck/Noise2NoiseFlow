@@ -9,6 +9,7 @@ sys.path.append('../')
 
 from model.noise2noise_flow import Noise2NoiseFlow
 from train_atom import init_params, _load_tif, _load_tif_atom, _ensure_channels  # 네가 올린 학습 파일 기준
+from train_atom import GLOBAL_VMIN, GLOBAL_VMAX
 
 # ----------------------
 # 1) 하이퍼파라미터 준비
@@ -25,7 +26,7 @@ def build_hps(device='cuda'):
 
     # 실제 학습에서 쓰인 입력 shape
     C = 2        # 중요: dataset이 최소 2채널로 맞췄음
-    H, W = 128,128 
+    H, W = 64,64
     hps.x_shape = (1, C, H, W)   # (B,C,H,W)
 
     hps.device = device if (device == 'cuda' and torch.cuda.is_available()) else 'cpu'
@@ -70,58 +71,77 @@ def load_trained_model(ckpt_path: str, device='cuda'):
 # 3) 단일 TIFF 이미지 denoise
 # ----------------------
 @torch.no_grad()
-def denoise_tif(model: Noise2NoiseFlow, hps, noisy_tif_path: str, out_tif_path: str = None):
+def denoise_tif(model: Noise2NoiseFlow, hps, noisy_tif_path: str, out_tif_path: str = None,
+                to_raw_scale: bool = True):
     """
-    단일 TIFF noisy 이미지를 로드 → 모델로 denoise → 1채널로 저장하는 함수
-    모델은 C=2 (2채널)로 동작하지만, 저장은 1채널로 수행.
+    단일 TIFF noisy 이미지를 로드 → 모델로 denoise → 저장.
+    - 학습 시 (x - ATOM_VMIN) / (ATOM_VMAX - ATOM_VMIN) 으로 정규화했다면,
+      저장 시에는 역변환해서 원래 카메라 count 스케일로 복원.
     """
     # --------------------------
-    # 0) Load TIFF as float32 (C,H,W)
+    # 0) Load TIFF as float32 (C,H,W), [0,1] normalized
     # --------------------------
-    noisy = _load_tif_atom(noisy_tif_path)          # float32, [0,1], shape (C?,H,W)
-    C = hps.x_shape[1]                          # <- 2
-    noisy = _ensure_channels(noisy, C=C)        # (2,H,W)
+    noisy = _load_tif_atom(noisy_tif_path)    # float32, [0,1], (C?,H,W)
+    C = hps.x_shape[1]                        # 2
+    noisy = _ensure_channels(noisy, C=C)      # (2,H,W)
 
     # --------------------------
     # 1) Move to device + batch dim
     # --------------------------
-    noisy_t = noisy.unsqueeze(0).to(hps.device) # (1,2,H,W)
+    noisy_t = noisy.unsqueeze(0).to(hps.device)  # (1,2,H,W)
 
     # --------------------------
-    # 2) Run denoiser
+    # 2) Run denoiser (normalized space)
     # --------------------------
     denoised = model.denoise(noisy_t).clamp(0, 1)   # (1,2,H,W)
 
     # --------------------------
-    # 3) Convert to numpy
+    # 3) Convert to numpy (normalized)
     # --------------------------
     denoised_np = denoised.squeeze(0).cpu().numpy() # (2,H,W)
     noisy_np    = noisy.cpu().numpy()               # (2,H,W)
 
     # --------------------------
-    # 4) Pick 1 channel for saving
-    #    - 보통 첫 channel이 noisy=clean pair 구조에서 원본 채널
+    # 4) Pick channel for saving (여기선 ch0)
     # --------------------------
-    denoised_single = denoised_np[0]  # (H,W)
-    noisy_single    = noisy_np[0]     # (H,W)
+    denoised_norm = denoised_np[0]  # (H,W), [0,1]
+    noisy_norm    = noisy_np[0]     # (H,W), [0,1]
 
     # --------------------------
-    # 5) Save as 16-bit TIFF
+    # 5) 역정규화 (옵션)
+    # --------------------------
+    if to_raw_scale:
+        # [0,1] -> raw 카메라 count 스케일
+        denoised_raw = denoised_norm * (GLOBAL_VMAX- GLOBAL_VMIN) + GLOBAL_VMIN
+        noisy_raw    = noisy_norm * (GLOBAL_VMAX - GLOBAL_VMIN) + GLOBAL_VMIN
+
+        # uint16 범위로 클리핑
+        denoised_raw = np.clip(denoised_raw, 0, 65535)
+        noisy_raw    = np.clip(noisy_raw, 0, 65535)
+
+        save_arr = denoised_raw.astype(np.uint16)
+        diff_max = np.abs(denoised_raw - noisy_raw).max()
+    else:
+        # 단순히 [0,1]을 16bit full range로 맵핑해서 보기용으로만 저장
+        save_arr = (denoised_norm * 65535.0).clip(0, 65535).astype(np.uint16)
+        noisy_raw = (noisy_norm * 65535.0).clip(0, 65535)
+        diff_max = np.abs(save_arr.astype(np.float32) - noisy_raw).max()
+
+    # --------------------------
+    # 6) Save TIFF
     # --------------------------
     if out_tif_path is None:
         base, ext = os.path.splitext(noisy_tif_path)
         out_tif_path = base + "_denoised.tif"
 
     from tifffile import imwrite
-    imwrite(out_tif_path, (denoised_single * 65535).astype(np.uint16))
+    imwrite(out_tif_path, save_arr)
 
-    # --------------------------
-    # 6) Debug: 얼마나 변했는지 체크
-    # --------------------------
-    diff = np.abs(denoised_single - noisy_single).max()
-    print(f"[saved] {noisy_tif_path} -> {out_tif_path}, max abs diff={diff}")
+    print(f"[saved] {noisy_tif_path} -> {out_tif_path}, max abs diff={diff_max}")
 
-    return denoised_single
+    return denoised_norm  # 필요하면 denoised_raw로 바꿔도 됨
+
+
 
 # ----------------------
 # 4) test 폴더 전체 돌리기
@@ -163,10 +183,10 @@ def denoise_test_folder(model: Noise2NoiseFlow, hps, test_root: str):
 # ----------------------
 if __name__ == '__main__':
     # 학습 때 저장된 best 모델 경로
-    ckpt_path = 'experiments/weights/best_model.pth'
+    ckpt_path = 'experiments/weights/best_model_real.pth'
 
     # test 폴더 루트 (scene_*들이 있는 폴더)
-    test_root = './data/test'   # 예: 'data/custom_dataset/test' 이런 식으로
+    test_root = './data_atom/test'   # 예: 'data/custom_dataset/test' 이런 식으로
 
     model, hps = load_trained_model(ckpt_path, device='cuda')
     denoise_test_folder(model, hps, test_root)

@@ -8,7 +8,7 @@ import sys
 sys.path.append('../')
 
 from model.noise2noise_flow import Noise2NoiseFlow
-from train_atom import init_params, _load_tif, _ensure_channels  # 네가 올린 학습 파일 기준
+from train_atom import init_params, _load_tif, _load_tif_atom, _ensure_channels  # 네가 올린 학습 파일 기준
 
 # ----------------------
 # 1) 하이퍼파라미터 준비
@@ -25,7 +25,7 @@ def build_hps(device='cuda'):
 
     # 실제 학습에서 쓰인 입력 shape
     C = 2        # 중요: dataset이 최소 2채널로 맞췄음
-    H, W = 128, 128
+    H, W = 128,128 
     hps.x_shape = (1, C, H, W)   # (B,C,H,W)
 
     hps.device = device if (device == 'cuda' and torch.cuda.is_available()) else 'cpu'
@@ -78,7 +78,7 @@ def denoise_tif(model: Noise2NoiseFlow, hps, noisy_tif_path: str, out_tif_path: 
     # --------------------------
     # 0) Load TIFF as float32 (C,H,W)
     # --------------------------
-    noisy = _load_tif(noisy_tif_path)          # float32, [0,1], shape (C?,H,W)
+    noisy = _load_tif_atom(noisy_tif_path)          # float32, [0,1], shape (C?,H,W)
     C = hps.x_shape[1]                          # <- 2
     noisy = _ensure_channels(noisy, C=C)        # (2,H,W)
 
@@ -119,9 +119,8 @@ def denoise_tif(model: Noise2NoiseFlow, hps, noisy_tif_path: str, out_tif_path: 
     # 6) Debug: 얼마나 변했는지 체크
     # --------------------------
     diff = np.abs(denoised_single - noisy_single).max()
-    print(f"[saved] {noisy_tif_path} -> {out_tif_path}, max abs diff={diff:.6f}")
+    print(f"[saved] {noisy_tif_path} -> {out_tif_path}, max abs diff={diff}")
 
-    return denoised_single
     return denoised_single
 
 # ----------------------
@@ -148,13 +147,16 @@ def denoise_test_folder(model: Noise2NoiseFlow, hps, test_root: str):
         return
 
     print(f"Found {len(scene_dirs)} scenes under {test_root}")
+    i = 0
     for scene in scene_dirs:
+        if i > 2:
+            break
         for name in ['a.tif', 'b.tif']:
             tif_path = os.path.join(scene, name)
             if os.path.isfile(tif_path):
                 denoise_tif(model, hps, tif_path)
             # b.tif는 필요 없으면 위 루프에서 'a.tif'만 돌려도 됨
-        break
+        i += 1
 
 # ----------------------
 # 5) 스크립트로 사용할 때

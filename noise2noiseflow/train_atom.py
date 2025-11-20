@@ -62,6 +62,64 @@ def _load_tif(path: str) -> torch.Tensor:
     logging.debug("Normalized TIFF %s to tensor shape %s", path, array.shape)
     return torch.from_numpy(array)
 
+GLOBAL_VMIN = 415   # 예: train 전체에서 1% 퍼센타일
+GLOBAL_VMAX = 677  # 예: train 전체에서 99% 퍼센타일
+
+
+def _load_tif_atom(path: str,
+                   vmin: float = GLOBAL_VMIN,
+                   vmax: float = GLOBAL_VMAX) -> torch.Tensor:
+    """
+    Atom imaging용 TIFF 로더 (global vmin/vmax 사용).
+
+    - TIFF → float32
+    - [vmin, vmax] 구간을 0~1로 선형 스케일링
+    - 최종 shape: (C, H, W) 텐서
+    """
+    # 1) TIFF 읽기
+    if tifffile is not None:
+        array = tifffile.imread(path)
+    else:
+        with Image.open(path) as img:
+            array = np.array(img)
+
+    # 2) float32로 변환
+    array = array.astype(np.float32)
+
+    # 3) global vmin/vmax로 0~1 정규화
+    if vmax <= vmin:
+        raise ValueError(f"Invalid vmin/vmax: vmin={vmin}, vmax={vmax}")
+
+    array = (array - vmin) / (vmax - vmin)
+    array = np.clip(array, 0.0, 1.0)
+
+    # 4) 채널 차원 정리 → (C, H, W)
+    if array.ndim == 2:
+        # (H, W) → (1, H, W)
+        array = array[None, :, :]
+
+    elif array.ndim == 3:
+        # (H, W, C) 또는 (C, H, W) 둘 중 하나라고 가정
+        # H, W가 같고 C가 작으면 둘 다 애매하니까, 다음 정도로 분기
+        if array.shape[0] <= 4 and array.shape[1] == array.shape[2]:
+            # (C, H, W) 형태라고 보고 그대로 사용
+            pass
+        elif array.shape[-1] <= 4 and array.shape[0] == array.shape[1]:
+            # (H, W, C) → (C, H, W)
+            array = np.transpose(array, (2, 0, 1))
+        else:
+            # 애매하면 일단 마지막 축을 채널로 보고 transpose
+            array = np.transpose(array, (2, 0, 1))
+    else:
+        raise ValueError(f"Unsupported TIFF shape for atom loader: {array.shape}")
+
+    logging.debug(
+        "Atom-normalized %s -> shape=%s | final min=%.4f | max=%.4f",
+        path, array.shape, float(array.min()), float(array.max())
+    )
+
+    return torch.from_numpy(array)
+
 def _ensure_channels(x: torch.Tensor, C: int) -> torch.Tensor:
     """
     x: (C,H,W) 텐서. 1채널이면 C로 반복 복제, C보다 크면 앞 C개만 사용.
@@ -119,8 +177,8 @@ class PairedTifPatchDataset(Dataset):
         noisy_path, clean_path = self.samples[scene_idx]
         if idx % max(self.patches_per_image, 1) == 0:
             logging.debug("Loading scene %d (%s, %s) for stage %s", scene_idx, noisy_path, clean_path, self.stage)
-        noisy = _load_tif(noisy_path)
-        clean = _load_tif(clean_path)
+        noisy = _load_tif_atom(noisy_path)
+        clean = _load_tif_atom(clean_path)
         noisy, clean = _crop_pair(noisy, clean, self.patch_size, self.stage)
         
         noisy = _ensure_channels(noisy, self.desired_channels)

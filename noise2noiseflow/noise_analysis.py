@@ -352,43 +352,139 @@ def save_example_images(
         #     os.path.join(out_dir, f"noisy_raw_{i}.tif"),
         #     np.clip(noisy_raw, 0, 65535).astype(np.uint16),
         # )
+
+def kl_divergence_pmf(p_bins, p_pmf, q_bins, q_pmf, eps=1e-12):
+    """
+    p_bins, q_bins: bin boundaries (same length ideally)
+    p_pmf, q_pmf  : discrete pmf arrays of shape (K,)
     
+    Returns: scalar KL(P || Q)
+    """
+    # --- 1) bin 일치 여부 체크 ---
+    if not np.allclose(p_bins, q_bins):
+        raise ValueError("P and Q must use identical bin boundaries for PMF KL divergence.")
+
+    # --- 2) Normalize just in case ---
+    p = p_pmf / (p_pmf.sum() + eps)
+    q = q_pmf / (q_pmf.sum() + eps)
+
+    # --- 3) KL(P||Q) ---
+    mask = p > 0
+    kl = np.sum(p[mask] * np.log(p[mask] / (q[mask] + eps)))
+    return kl
+
+
+def extract_noise_samples_from_background(bg_tif_path, roi=None):
+    imgs = tiff.imread(bg_tif_path).astype(np.float32)  # (T,H,W)
+
+    if imgs.ndim != 3:
+        raise ValueError("TIFF must be (T,H,W)")
+
+    if roi is not None:
+        y0, y1, x0, x1 = roi
+        imgs = imgs[:, y0:y1, x0:x1]
+
+    # frame-wise mean subtraction (중요)
+    frame_means = imgs.mean(axis=(1,2), keepdims=True)
+    imgs = imgs - frame_means
+
+    return imgs.reshape(-1)  # 1D samples
+
+def pmf_with_common_bins(samples_p, samples_q, num_bins=200):
+    vmin = min(samples_p.min(), samples_q.min())
+    vmax = max(samples_p.max(), samples_q.max())
+
+    bins = np.linspace(vmin, vmax, num_bins+1)
+
+    hist_p, _ = np.histogram(samples_p, bins=bins, density=False)
+    hist_q, _ = np.histogram(samples_q, bins=bins, density=False)
+
+    pmf_p = hist_p / hist_p.sum()
+    pmf_q = hist_q / hist_q.sum()
+
+    return bins, pmf_p, pmf_q
+    
+
 def main():
     ckpt_path = "experiments/weights/best_model_real.pth"
     bg_stack_path = "./data_atom/background.tif"  # (N,H,W) 또는 (H,W)
-    
-    bins, pmf = compute_pmf_from_tiff_stack(
+
+    # ---------------------------------------------------
+    # 0) RAW background noise PMF (optional visualization)
+    # ---------------------------------------------------
+    bins_p, pmf_raw = compute_pmf_from_tiff_stack(
         tiff_path=bg_stack_path,
         num_bins=200,
         subtract_mean=True,
         roi=None,
     )
-    visualize_pmf_save(bins, pmf, out_path="./noiseflow_viz/pmf_raw_background_stack.png", title="PMF of Raw Background Stack")
+    visualize_pmf_save(
+        bins_p,
+        pmf_raw,
+        out_path="./noiseflow_viz/pmf_raw_background_stack.png",
+        title="PMF of Raw Background Stack"
+    )
 
-    # 1) 모델 로드 (flow 포함)
+    # ---------------------------------------------------
+    # 1) NoiseFlow 전체 모델 로드
+    # ---------------------------------------------------
     model, hps = load_trained_model_for_flow(ckpt_path, device="cuda")
 
-    # 2) bg mean 텐서 만들기 (clean background, [0,1] 스케일)
-    bg_t, denom = build_bg_mean_tensor(bg_stack_path, hps)  # bg_t: (1,C,H,W)
+    # ---------------------------------------------------
+    # 2) Background mean (clean bg image) → bg_t
+    # ---------------------------------------------------
+    bg_t, denom = build_bg_mean_tensor(bg_stack_path, hps)
 
-    # 3) noise model에서 noisy background 샘플 여러 장 생성
+    # ---------------------------------------------------
+    # 3) NoiseFlow noise 샘플 생성
+    # ---------------------------------------------------
     noisy_norm, noise_norm = sample_noisy_bg_from_flow(
         model,
         bg_t,
-        n_samples=64,   # pmf 안정 위해 적당히 크게
+        n_samples=1024,
     )
 
-    # 4) noise 분포 pmf / pdf 계산 (노이즈만 보고 싶으면 noise_norm 사용)
-    bins, pmf, pdf = compute_pmf_pdf_from_images(
-        noise_norm,     # 또는 noisy_norm 사용 가능
-        num_bins=200,
-        subtract_mean=True,
+    # ---------------------------------------------------
+    # 4) Background stack에서 noise samples 추출 (1D)
+    # ---------------------------------------------------
+    bg_samples = extract_noise_samples_from_background(bg_stack_path)
+
+    # ---------------------------------------------------
+    # 5) NoiseFlow noise sample을 1D로 변환
+    # ---------------------------------------------------
+    noise_samples = noise_norm.reshape(-1).astype(np.float32)
+
+    # ---------------------------------------------------
+    # 6) 공통 bins로 두 PMF 계산
+    # ---------------------------------------------------
+    bins, pmf_bg, pmf_nf = pmf_with_common_bins(
+        bg_samples,
+        noise_samples,
+        num_bins=200
     )
 
-    # 5) pmf/pdf 시각화
-    visualize_pmf_pdf_save(bins, pmf, pdf, out_path="./noiseflow_viz/pmf_pdf_noiseflow.png", title="NoiseFlow noise PMF/PDF")
+    # ---------------------------------------------------
+    # 7) KL(bg || noiseflow) 계산
+    # ---------------------------------------------------
+    KL = kl_divergence_pmf(bins, pmf_bg, bins, pmf_nf)
+    print("KL(background || NoiseFlow) =", KL)
 
-    # 6) bg_mean / noise / noisy 이미지 저장
+    # ---------------------------------------------------
+    # 8) PMF/PDF 시각화 (NoiseFlow 쪽)
+    # ---------------------------------------------------
+    # NoiseFlow에 대해만 PDF 계산
+    bins_nf, pmf_nf_single, pdf_nf_single = compute_pmf_pdf_from_images(
+    noise_norm, num_bins=200, subtract_mean=True
+    )
+    visualize_pmf_pdf_save(
+        bins_nf, pmf_nf_single, pdf_nf_single,
+        out_path="./noiseflow_viz/pmf_pdf_noiseflow_local.png",
+        title="NoiseFlow Noise (local bins)"
+    )
+
+    # ---------------------------------------------------
+    # 9) 예시 이미지 저장
+    # ---------------------------------------------------
     save_example_images(
         bg_t=bg_t,
         noise_norm=noise_norm,
@@ -396,16 +492,16 @@ def main():
         denom=denom,
         out_dir="./noiseflow_viz",
         max_examples=1,
-        
     )
+
     save_background_sample(bg_stack_path, out_dir="./noiseflow_viz")
 
-    # 7) 간단한 수치 확인
+    # ---------------------------------------------------
+    # 10) sanity check
+    # ---------------------------------------------------
     print("bins shape:", bins.shape)
-    print("pmf shape :", pmf.shape)
-    print("sum pmf   :", pmf.sum())
-    print("pdf int ~ :", np.sum(pdf * np.diff(bins)))  # ≈ 1이면 정상
-
+    print("pmf_bg sum :", pmf_bg.sum())
+    print("pmf_nf sum :", pmf_nf.sum())
 
 if __name__ == "__main__":
     main()

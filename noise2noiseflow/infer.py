@@ -21,7 +21,7 @@ def build_hps(device='cuda'):
 
     # 학습 때와 동일하게 맞추기
     hps.arch = "unc|unc|unc|unc|gain|unc|unc|unc|unc"
-    hps.flow_permutation = 'conv'   # ← arg_parser 기본값이 뭔지 확인해서 필요하면 수정
+    hps.flow_permutation = 1  # ← arg_parser 기본값이 뭔지 확인해서 필요하면 수정
     hps.lu_decomp = True
     hps.denoiser = 'dncnn'          # 학습 때도 dncnn 썼다면 그대로
     hps.lmbda = 262144

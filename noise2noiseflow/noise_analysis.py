@@ -35,69 +35,38 @@ def compute_pmf_from_tiff_stack(
     subtract_mean=True,
     roi=None,
 ):
-    """
-    tiff_path: path to TIFF stack (T, H, W)
-    num_bins: number of histogram bins
-    subtract_mean: subtract overall mean to isolate noise
-    roi: (y0, y1, x0, x1). If None, use entire image.
-
-    Returns:
-        bins: (num_bins+1,) array of bin boundaries
-        pmf:  (num_bins,) normalized probability mass array
-    """
-
-    # ---- 1) TIFF 읽기 ----
-    imgs = tiff.imread(tiff_path)   # shape (T, H, W)
-    imgs = imgs.astype(np.float32)
+    imgs = tiff.imread(tiff_path).astype(np.float32)  # (T,H,W)
 
     if imgs.ndim != 3:
-        raise ValueError("TIFF must be a stack: shape should be (T, H, W).")
+        raise ValueError("TIFF must be (T,H,W)")
 
-    T, H, W = imgs.shape
-
-    # ---- 2) ROI 선택 ----
+    # ROI
     if roi is not None:
         y0, y1, x0, x1 = roi
-        imgs = imgs[:, y0:y1, x0:x1]  # shape: (T, Hy, Wx)
+        imgs = imgs[:, y0:y1, x0:x1]
 
-    # ---- 3) 평균 제거 (noise isolation) ----
+    # ---- 핵심: 프레임마다 별도로 평균 제거 ----
     if subtract_mean:
-        mean_val = imgs.mean()
-        imgs = imgs - mean_val
+        frame_means = imgs.mean(axis=(1,2), keepdims=True)  # (T,1,1)
+        imgs = imgs - frame_means
 
-    # ---- 4) 모든 픽셀을 1D 샘플로 flatten ----
-    samples = imgs.reshape(-1)   # shape (T * Hy * Wx,)
+    samples = imgs.reshape(-1)
 
-    # ---- 5) bin 구간 정의 ----
     vmin, vmax = samples.min(), samples.max()
-    bins = np.linspace(vmin, vmax, num_bins + 1)
+    bins = np.linspace(vmin, vmax, num_bins+1)
 
-    # ---- 6) 히스토그램 계산 ----
     hist, _ = np.histogram(samples, bins=bins, density=False)
-
-    # ---- 7) PMF로 정규화 ----
     pmf = hist / hist.sum()
 
     return bins, pmf
 
-
-def visualize_pmf(bins, pmf, title="PMF of Noise Distribution"):
-    """
-    bins: array of bin boundaries, shape (K+1,)
-    pmf: array of probabilities, shape (K,)
-    """
-
-    centers = 0.5 * (bins[:-1] + bins[1:])  # bin 중심값
+def visualize_pmf_save(bins, pmf, out_path, title="PMF of Noise Distribution"):
+    centers = 0.5 * (bins[:-1] + bins[1:])  # bin 중심
 
     plt.figure(figsize=(10, 5))
 
-    # ---- 1) 라인 플롯 ----
     plt.plot(centers, pmf, '-o', markersize=2, label='PMF (line)')
-    
-    # ---- 2) 막대 플롯 ----
     plt.bar(centers, pmf, width=np.diff(bins), alpha=0.3, label='PMF (bar)')
-    
-    # ---- 3) 스텝 플롯 ----
     plt.step(bins[:-1], pmf, where='post', color='red', alpha=0.5, label='PMF (step)')
 
     plt.xlabel("Noise / Pixel Value")
@@ -106,7 +75,12 @@ def visualize_pmf(bins, pmf, title="PMF of Noise Distribution"):
     plt.grid(True, alpha=0.4)
     plt.legend()
     plt.tight_layout()
-    plt.show()
+
+    # 화면에 띄우지 않고 저장만
+    plt.savefig(out_path, dpi=200)
+    plt.close()
+
+    print(f"[saved PMF figure] -> {out_path}")
 
 
 # ----------------------
@@ -290,7 +264,7 @@ def save_background_sample(bg_tif_path, out_dir="./noiseflow_viz"):
 
     print("[saved original background image]")
     
-def visualize_pmf_pdf(bins, pmf, pdf, title="Noise PMF/PDF"):
+def visualize_pmf_pdf_save(bins, pmf, pdf, out_path, title="Noise PMF/PDF"):
     centers = 0.5 * (bins[:-1] + bins[1:])
 
     plt.figure(figsize=(10, 5))
@@ -302,7 +276,8 @@ def visualize_pmf_pdf(bins, pmf, pdf, title="Noise PMF/PDF"):
     plt.grid(True, alpha=0.4)
     plt.legend()
     plt.tight_layout()
-    plt.show()
+    plt.savefig(out_path, dpi=200)
+    plt.close()
     
 def save_example_images(
     bg_t,
@@ -381,6 +356,14 @@ def save_example_images(
 def main():
     ckpt_path = "experiments/weights/best_model_real.pth"
     bg_stack_path = "./data_atom/background.tif"  # (N,H,W) 또는 (H,W)
+    
+    bins, pmf = compute_pmf_from_tiff_stack(
+        tiff_path=bg_stack_path,
+        num_bins=200,
+        subtract_mean=True,
+        roi=None,
+    )
+    visualize_pmf_save(bins, pmf, out_path="./noiseflow_viz/pmf_raw_background_stack.png", title="PMF of Raw Background Stack")
 
     # 1) 모델 로드 (flow 포함)
     model, hps = load_trained_model_for_flow(ckpt_path, device="cuda")
@@ -403,7 +386,7 @@ def main():
     )
 
     # 5) pmf/pdf 시각화
-    visualize_pmf_pdf(bins, pmf, pdf, title="NoiseFlow noise PMF/PDF")
+    visualize_pmf_pdf_save(bins, pmf, pdf, out_path="./noiseflow_viz/pmf_pdf_noiseflow.png", title="NoiseFlow noise PMF/PDF")
 
     # 6) bg_mean / noise / noisy 이미지 저장
     save_example_images(

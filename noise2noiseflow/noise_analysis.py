@@ -5,6 +5,8 @@ import numpy as np
 import torch
 from tifffile import imread
 import os
+from scipy.stats import norm, poisson
+
 
 import sys
 sys.path.append("../")
@@ -28,7 +30,72 @@ if not torch.cuda.is_available():
 
     torch.Tensor.cuda = _fake_tensor_cuda
     torch.nn.Module.cuda = _fake_module_cuda 
+
+def gaussian_fit_pmf(bins, samples):
+    """
+    bins: (K+1,)
+    samples: 1D array noise samples
     
+    Return: gaussian_pmf(K,)
+    """
+    mu = samples.mean()
+    sigma = samples.std() + 1e-12
+
+    # PDF at bin centers
+    centers = 0.5 * (bins[:-1] + bins[1:])
+    pdf = norm.pdf(centers, loc=mu, scale=sigma)
+
+    # Convert pdf → pmf
+    widths = np.diff(bins)
+    pmf = pdf * widths
+    pmf /= pmf.sum()
+
+    return pmf, mu, sigma
+
+def poisson_gaussian_fit_pmf(bins, samples, max_poisson_mult=5):
+    """
+    Fit Poisson-Gaussian model:
+        X = Poisson(lambda) + N(0, sigma^2)
+
+    bins: histogram bin boundaries
+    samples: 1D noise samples (mean≈0 after subtract_mean)
+
+    Return:
+        pmf (K,)
+        lambda_hat
+        sigma_hat
+    """
+    # Step 1: parameter estimation
+    mean_x = samples.mean()
+    var_x = samples.var()
+
+    lam = mean_x
+    sigma2 = max(var_x - lam, 1e-12)
+    sigma = np.sqrt(sigma2)
+
+    centers = 0.5 * (bins[:-1] + bins[1:])
+    widths  = np.diff(bins)
+    K = len(centers)
+
+    # Step 2: Build Poisson-Gaussian pdf on centers
+    # Range of Poisson values to consider
+    max_k = int(lam + max_poisson_mult * np.sqrt(lam + 1e-6)) + 10
+    ks = np.arange(0, max_k)
+
+    # Poisson prob
+    pois_p = poisson.pmf(ks, lam)
+
+    # For each k, gaussian centered at k
+    pdf = np.zeros_like(centers)
+    for i, k in enumerate(ks):
+        pdf += pois_p[i] * norm.pdf(centers, loc=k, scale=sigma)
+
+    # Step 3: PDF → PMF
+    pmf = pdf * widths
+    pmf /= pmf.sum()
+
+    return pmf, lam, sigma
+
 def compute_pmf_from_tiff_stack(
     tiff_path,
     num_bins=200,
@@ -388,11 +455,20 @@ def extract_noise_samples_from_background(bg_tif_path, roi=None):
     frame_means = imgs.mean(axis=(1,2), keepdims=True)
     imgs = imgs - frame_means
 
-    return imgs.reshape(-1)  # 1D samples
+    samples_raw = imgs.reshape(-1)  # raw noise (mean≈0)
 
-def pmf_with_common_bins(samples_p, samples_q, num_bins=200):
-    vmin = min(samples_p.min(), samples_q.min())
-    vmax = max(samples_p.max(), samples_q.max())
+    # 학습 때와 같은 0~1 정규화 스케일로 맞추기
+    denom = (GLOBAL_VMAX - GLOBAL_VMIN)
+    bg_norm_samples = (samples_raw - GLOBAL_VMIN) / denom
+
+    # NoiseFlow쪽과 공정하게 비교하려고 전체 평균 0으로 맞춤
+    bg_norm_samples = bg_norm_samples - bg_norm_samples.mean()
+
+    return bg_norm_samples
+
+def pmf_with_common_bins(all_samples, samples_p, samples_q, num_bins=200):
+    vmin, vmax = all_samples.min(), all_samples.max()
+    bins = np.linspace(vmin, vmax, 200)
 
     bins = np.linspace(vmin, vmax, num_bins+1)
 
@@ -452,12 +528,19 @@ def main():
     # ---------------------------------------------------
     # 5) NoiseFlow noise sample을 1D로 변환
     # ---------------------------------------------------
+    # noise_norm: (N,H,W) normalized residual noise
+    # noise_norm: (N,H,W), 이미 (x - VMIN)/(VMAX - VMIN) 스케일이라고 가정
     noise_samples = noise_norm.reshape(-1).astype(np.float32)
+
+    # 배경과 마찬가지로 전체 평균 0으로 맞추기
+    noise_samples = noise_samples - noise_samples.mean()
 
     # ---------------------------------------------------
     # 6) 공통 bins로 두 PMF 계산
     # ---------------------------------------------------
+    all_samples = np.concatenate([bg_samples, noise_samples], axis=0)
     bins, pmf_bg, pmf_nf = pmf_with_common_bins(
+        all_samples,
         bg_samples,
         noise_samples,
         num_bins=200
@@ -496,12 +579,19 @@ def main():
 
     save_background_sample(bg_stack_path, out_dir="./noiseflow_viz")
 
-    # ---------------------------------------------------
-    # 10) sanity check
-    # ---------------------------------------------------
-    print("bins shape:", bins.shape)
-    print("pmf_bg sum :", pmf_bg.sum())
-    print("pmf_nf sum :", pmf_nf.sum())
+    # Gaussian fit PMF
+    pmf_gauss, mu_g, sigma_g = gaussian_fit_pmf(bins, bg_samples)
+    KL_gauss = kl_divergence_pmf(bins, pmf_bg, bins, pmf_gauss)
+    print("KL(background || Gaussian) =", KL_gauss)
+
+    # # Poisson-Gaussian fit PMF
+    # pmf_pg, lam_pg, sig_pg = poisson_gaussian_fit_pmf(bins, bg_samples)
+    # KL_pg = kl_divergence_pmf(bins, pmf_bg, bins, pmf_pg)
+    # print("KL(background || Poisson-Gaussian) =", KL_pg)
+
+    # 기존 NoiseFlow KL
+    KL_nf = kl_divergence_pmf(bins, pmf_bg, bins, pmf_nf)
+    print("KL(background || NoiseFlow) =", KL_nf)
 
 if __name__ == "__main__":
     main()

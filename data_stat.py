@@ -47,5 +47,5 @@ def stats_with_percentile(path, percentiles=[1, 5, 50, 95, 99]):
     }
 
 # 사용 예시
-stats = stats_with_percentile("20251020_8ms_10ms_20ms_between_20ms_rep20000_64x64.tif")
+stats = stats_with_percentile("./noise2noiseflow/data_raw/20251125_5_5_20/20251124_5ms_5ms_20ms_between_20ms_20000_cropped.tif")
 print(stats)

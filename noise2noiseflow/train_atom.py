@@ -62,8 +62,8 @@ def _load_tif(path: str) -> torch.Tensor:
     logging.debug("Normalized TIFF %s to tensor shape %s", path, array.shape)
     return torch.from_numpy(array)
 
-GLOBAL_VMIN = 415   # 예: train 전체에서 1% 퍼센타일
-GLOBAL_VMAX = 677  # 예: train 전체에서 99% 퍼센타일
+GLOBAL_VMIN = 410   # 예: train 전체에서 1% 퍼센타일
+GLOBAL_VMAX = 622  # 예: train 전체에서 99% 퍼센타일
 
 
 def _load_tif_atom(path: str,

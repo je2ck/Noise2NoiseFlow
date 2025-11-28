@@ -587,37 +587,39 @@ def compare_gaussian_noise_model():
     # 기존 NoiseFlow KL
     KL_nf = kl_divergence_pmf(bins, pmf_bg, bins, pmf_nf)
     print("KL(background || NoiseFlow) =", KL_nf)
-   
-    
-def compare_poisson_gaussian_noise_model():
-    ckpt_path = "experiments/weights/best_model_real.pth"
-    bg_stack_path = "./data_atom/background.tif"  # (T,H,W) 또는 (H,W)
+
+
+def compare_poisson_gaussian_noise_model(
+    n_kl_samples=30,      # KL을 몇 번 반복해서 평균/표준편차 낼지
+    Nf=512,               # 한 번의 KL 계산에 사용할 synthetic frame 수
+    num_bins=200,
+):
+    ckpt_path = "experiments/archive/8-10-20-conseq.pth"
+    bg_stack_path = "./data_atom/data_atom_8_10_20_conseq/background.tif"  # (T,H,W) 또는 (H,W)
     out_dir = "./noiseflow_viz"
     os.makedirs(out_dir, exist_ok=True)
 
     # -----------------------------
-    # 1) 실제 background raw 스택 로드
+    # 1) 실제 background raw 스택 로드 (고정)
     # -----------------------------
     arr = imread(bg_stack_path).astype(np.float32)  # (T,H,W) 또는 (H,W)
     if arr.ndim == 2:
         arr = arr[None, ...]  # (1,H,W)
     T, H, W = arr.shape
 
-    # 전체 raw 샘플 (ground-truth)
+    # 전체 raw 샘플 (ground-truth, 고정)
     bg_samples_raw = arr.reshape(-1)
 
-    # "clean" 역할을 할 mean frame (모든 프레임 평균)
+    # "clean" 역할을 할 mean frame (모든 프레임 평균, 고정)
     mean_frame = arr.mean(axis=0)   # (H,W)
 
     # -----------------------------
-    # 2) 전역 통계로 Gaussian / Poisson-Gaussian 파라미터 추정
+    # 2) 전역 통계로 Gaussian / Poisson-Gaussian 파라미터 추정 (고정)
     # -----------------------------
     mean_bg = bg_samples_raw.mean()
     var_bg  = bg_samples_raw.var()
 
-    # Gaussian: N( mean_bg, var_bg ) 라고 가정하지만
-    # synthetic에서는 mean_frame + N(0, sigma_g^2) 형태로 사용할 거라
-    # residual의 sigma만 쓰고, 평균은 mean_frame이 담당
+    # Gaussian: mean_frame + N(0, sigma_g^2)
     sigma_g = np.sqrt(max(var_bg, 1e-12))
 
     # Poisson-Gaussian: X = P(lam) + N(0, sigma_pg^2)
@@ -626,7 +628,7 @@ def compare_poisson_gaussian_noise_model():
     sig_pg  = np.sqrt(sigma2_pg)
 
     # -----------------------------
-    # 3) NoiseFlow 로드
+    # 3) NoiseFlow 로드 (고정)
     # -----------------------------
     model, hps = load_trained_model_for_flow(ckpt_path, device="cuda")
     denom = float(GLOBAL_VMAX - GLOBAL_VMIN)
@@ -657,60 +659,107 @@ def compare_poisson_gaussian_noise_model():
         return np.stack(frames, axis=0)   # (n_frames, H, W)
 
     # -----------------------------
-    # 4) 세 가지 모델에서 synthetic frame 샘플링
+    # 4) "고정된 bins" 한 번만 만든다 (배경 + 대략적 스케일 기준)
+    #    → 매 trial에서 같은 bins를 써야 KL 분산을 보기 좋음
     # -----------------------------
-    Nf = 512   # 각 모델당 생성할 프레임 수
-
-    # (a) NoiseFlow
-    nf_syn = sample_nf_frames_from_mean(Nf)         # (Nf,H,W)
-    nf_samples_raw = nf_syn.reshape(-1)
-
-    # (b) Gaussian: mean_frame + N(0, sigma_g^2)
-    gauss_residual = np.random.normal(
-        loc=0.0, scale=sigma_g, size=(Nf, H, W)
-    ).astype(np.float32)
-    gauss_syn = mean_frame[None, ...] + gauss_residual
-    gauss_samples_raw = gauss_syn.reshape(-1)
-
-    # (c) Poisson-Gaussian: mean_frame + [ (P(lam) - lam) + N(0, sig_pg^2) ]
-    S = np.random.poisson(lam=lam_pg, size=(Nf, H, W)).astype(np.float32)
-    G = np.random.normal(loc=0.0, scale=sig_pg, size=(Nf, H, W)).astype(np.float32)
-    pg_residual = (S - lam_pg) + G
-    pg_syn = mean_frame[None, ...] + pg_residual
-    pg_samples_raw = pg_syn.reshape(-1)
-
-    # -----------------------------
-    # 5) 공통 bins 만들고 PMF & KL 계산
-    # -----------------------------
-    num_bins = 200
-    all_samples = np.concatenate(
-        [bg_samples_raw, gauss_samples_raw, pg_samples_raw, nf_samples_raw],
-        axis=0
-    )
-    vmin, vmax = all_samples.min(), all_samples.max()
+    # 약간의 margin을 줘도 되고, 그냥 bg_samples_raw 기준으로 만들어도 됨
+    vmin, vmax = bg_samples_raw.min(), bg_samples_raw.max()
+    margin = 0.05 * (vmax - vmin + 1e-12)
+    vmin -= margin
+    vmax += margin
     bins = np.linspace(vmin, vmax, num_bins + 1)
 
     def pmf_from(samples):
         hist, _ = np.histogram(samples, bins=bins, density=False)
-        pmf = hist / hist.sum()
+        pmf = hist / (hist.sum() + 1e-12)
         return pmf
 
-    pmf_bg    = pmf_from(bg_samples_raw)
-    pmf_gauss = pmf_from(gauss_samples_raw)
-    pmf_pg    = pmf_from(pg_samples_raw)
-    pmf_nf    = pmf_from(nf_samples_raw)
-
-    KL_gauss = kl_divergence_pmf(bins, pmf_bg, bins, pmf_gauss)
-    KL_pg    = kl_divergence_pmf(bins, pmf_bg, bins, pmf_pg)
-    KL_nf    = kl_divergence_pmf(bins, pmf_bg, bins, pmf_nf)
-
-    print("=== Raw-domain KL divergences (background || model) ===")
-    print(f"KL(background || Gaussian)         = {KL_gauss}")
-    print(f"KL(background || Poisson-Gaussian) = {KL_pg}")
-    print(f"KL(background || NoiseFlow)        = {KL_nf}")
+    # 배경 PMF는 한 번만 계산 (고정)
+    pmf_bg = pmf_from(bg_samples_raw)
 
     # -----------------------------
-    # 6) synthetic background 예시 이미지 저장
+    # 5) 여러 번 샘플해서 KL 분포 수집
+    # -----------------------------
+    KL_gauss_list = []
+    KL_pg_list    = []
+    KL_nf_list    = []
+
+    # 첫 trial의 synthetic 들은 예시 이미지/PMF plot에 쓰기 위해 저장
+    first_gauss_syn = None
+    first_pg_syn    = None
+    first_nf_syn    = None
+
+    for trial in range(n_kl_samples):
+        # (a) NoiseFlow
+        nf_syn = sample_nf_frames_from_mean(Nf)        # (Nf,H,W)
+        nf_samples_raw = nf_syn.reshape(-1)
+
+        # (b) Gaussian: mean_frame + N(0, sigma_g^2)
+        gauss_residual = np.random.normal(
+            loc=0.0, scale=sigma_g, size=(Nf, H, W)
+        ).astype(np.float32)
+        gauss_syn = mean_frame[None, ...] + gauss_residual
+        gauss_samples_raw = gauss_syn.reshape(-1)
+
+        # (c) Poisson-Gaussian: mean_frame + [ (P(lam) - lam) + N(0, sig_pg^2) ]
+        S = np.random.poisson(lam=lam_pg, size=(Nf, H, W)).astype(np.float32)
+        G = np.random.normal(loc=0.0, scale=sig_pg, size=(Nf, H, W)).astype(np.float32)
+        pg_residual = (S - lam_pg) + G
+        pg_syn = mean_frame[None, ...] + pg_residual
+        pg_samples_raw = pg_syn.reshape(-1)
+
+        # 첫 trial 저장
+        if trial == 0:
+            first_gauss_syn = gauss_syn.copy()
+            first_pg_syn    = pg_syn.copy()
+            first_nf_syn    = nf_syn.copy()
+
+        # PMF 계산
+        pmf_gauss = pmf_from(gauss_samples_raw)
+        pmf_pg    = pmf_from(pg_samples_raw)
+        pmf_nf    = pmf_from(nf_samples_raw)
+
+        # KL 계산
+        KL_gauss = kl_divergence_pmf(bins, pmf_bg, bins, pmf_gauss)
+        KL_pg    = kl_divergence_pmf(bins, pmf_bg, bins, pmf_pg)
+        KL_nf    = kl_divergence_pmf(bins, pmf_bg, bins, pmf_nf)
+
+        KL_gauss_list.append(KL_gauss)
+        KL_pg_list.append(KL_pg)
+        KL_nf_list.append(KL_nf)
+
+        print(f"[trial {trial+1}/{n_kl_samples}] "
+              f"KL_G={KL_gauss:.4e}, KL_PG={KL_pg:.4e}, KL_NF={KL_nf:.4e}")
+
+    KL_gauss_arr = np.array(KL_gauss_list)
+    KL_pg_arr    = np.array(KL_pg_list)
+    KL_nf_arr    = np.array(KL_nf_list)
+
+    print("\n=== Raw-domain KL divergences (background || model) ===")
+    print(f"Gaussian        : mean={KL_gauss_arr.mean():.6e}, "
+          f"std={KL_gauss_arr.std():.6e}, "
+          f"min={KL_gauss_arr.min():.6e}, max={KL_gauss_arr.max():.6e}")
+    print(f"Poisson-Gaussian: mean={KL_pg_arr.mean():.6e}, "
+          f"std={KL_pg_arr.std():.6e}, "
+          f"min={KL_pg_arr.min():.6e}, max={KL_pg_arr.max():.6e}")
+    print(f"NoiseFlow       : mean={KL_nf_arr.mean():.6e}, "
+          f"std={KL_nf_arr.std():.6e}, "
+          f"min={KL_nf_arr.min():.6e}, max={KL_nf_arr.max():.6e}")
+
+    plt.figure(figsize=(6, 5))
+    data = [KL_gauss_arr, KL_pg_arr, KL_nf_arr]
+    labels = ["Gaussian", "Poisson-Gaussian", "NoiseFlow"]
+
+    plt.boxplot(data, labels=labels, showmeans=True)
+    plt.ylabel("KL(background || model)")
+    plt.title("KL distribution (boxplot)")
+    plt.grid(True, axis="y", alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(os.path.join(out_dir, "KL_boxplot.png"), dpi=200)
+    plt.close()
+    
+    # -----------------------------
+    # 6) synthetic background 예시 이미지 저장 (첫 trial 기준)
     # -----------------------------
     def _save_raw_image(raw_img, out_path, title):
         img_norm = (raw_img - raw_img.min()) / (raw_img.max() - raw_img.min() + 1e-8)
@@ -728,43 +777,47 @@ def compare_poisson_gaussian_noise_model():
                     os.path.join(out_dir, "bg_real_raw.png"),
                     "Real background (one frame, raw)")
 
-    # (b) Gaussian model synthetic
-    _save_raw_image(gauss_syn[0],
+    # (b) Gaussian model synthetic (첫 trial)
+    _save_raw_image(first_gauss_syn[0],
                     os.path.join(out_dir, "bg_gaussian_model_raw.png"),
                     "Gaussian model synthetic background")
 
-    # (c) Poisson-Gaussian model synthetic
-    _save_raw_image(pg_syn[0],
+    # (c) Poisson-Gaussian model synthetic (첫 trial)
+    _save_raw_image(first_pg_syn[0],
                     os.path.join(out_dir, "bg_poisson_gaussian_model_raw.png"),
                     "Poisson-Gaussian model synthetic background")
 
-    # (d) NoiseFlow model synthetic
-    _save_raw_image(nf_syn[0],
+    # (d) NoiseFlow model synthetic (첫 trial)
+    _save_raw_image(first_nf_syn[0],
                     os.path.join(out_dir, "bg_noiseflow_model_raw.png"),
                     "NoiseFlow model synthetic background")
 
     # -----------------------------
-    # 7) PMF 비교 플롯
+    # 7) PMF 비교 플롯 (첫 trial 기준)
     # -----------------------------
+    # 첫 trial에서 사용했던 샘플을 다시 한 번 pmf_from에 넣어 사용
+    pmf_gauss_first = pmf_from(first_gauss_syn.reshape(-1))
+    pmf_pg_first    = pmf_from(first_pg_syn.reshape(-1))
+    pmf_nf_first    = pmf_from(first_nf_syn.reshape(-1))
+
     centers = 0.5 * (bins[:-1] + bins[1:])
     plt.figure(figsize=(10, 5))
-    plt.plot(centers, pmf_bg,    label="Background (empirical)")
-    plt.plot(centers, pmf_gauss, label="Gaussian model (sampled)")
-    plt.plot(centers, pmf_pg,    label="Poisson-Gaussian model (sampled)")
-    plt.plot(centers, pmf_nf,    label="NoiseFlow model (sampled)")
+    plt.plot(centers, pmf_bg,         label="Background (empirical)")
+    plt.plot(centers, pmf_gauss_first, label="Gaussian model (sampled, trial 0)")
+    plt.plot(centers, pmf_pg_first,    label="Poisson-Gaussian model (sampled, trial 0)")
+    plt.plot(centers, pmf_nf_first,    label="NoiseFlow model (sampled, trial 0)")
     plt.xlabel("Raw intensity (DN)")
     plt.ylabel("Probability (pmf)")
-    plt.title("Raw-domain PMF comparison (sample-based)")
+    plt.title("Raw-domain PMF comparison (sample-based, first trial)")
     plt.grid(True, alpha=0.4)
     plt.legend()
     plt.tight_layout()
-    plt.savefig(os.path.join(out_dir, "pmf_raw_bg_vs_models_sampled.png"), dpi=200)
+    plt.savefig(os.path.join(out_dir, "pmf_raw_bg_vs_models_sampled_first_trial.png"), dpi=200)
     plt.close()
 
     print(f"[saved synthetic background images & PMF plot] -> {out_dir}")
-    
-    
-    
+   
+
 if __name__ == "__main__":
-    compare_gaussian_noise_model()
+    # compare_gaussian_noise_model()
     compare_poisson_gaussian_noise_model()

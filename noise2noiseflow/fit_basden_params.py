@@ -1,139 +1,161 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
-from scipy.stats import norm
 from scipy.special import i1
 from tifffile import imread
+import os
 
-def basden_model_func(x, bias, sigma, gain, lam, scale):
-    """
-    Fitting을 위한 Basden + Gaussian 혼합 모델 함수
-    x: ADU 값
-    bias: 오프셋
-    sigma: Readout Noise Std
-    gain: EM Gain
-    lam: CIC Rate (평균 광자 수)
-    scale: 히스토그램 높이 보정용
-    """
-    # 1. Zero-photon Peak (Gaussian)
-    # P(0) approx exp(-lam). 
-    # 하지만 Fitting을 위해선 이 비율도 자유도로 두는 게 더 잘 맞습니다.
-    # 여기서는 근사적으로 Gaussian 항과 Basden 항을 더합니다.
-    
-    # Gaussian Part (Main Peak)
-    gauss = np.exp(-0.5 * ((x - bias) / sigma)**2)
-    # 정규화 상수는 scale에 포함시킨다고 가정
-    
-    # Basden Part (Tail)
-    # x > bias 인 영역에서만 유효
-    x_shifted = x - bias
-    
-    # Bessel 항 계산 (Overflow 방지를 위해 clip)
-    z = x_shifted
-    # z가 0 이하거나 너무 작으면 Basden 값은 0
-    # 계산 안정성을 위해 마스킹
-    basden = np.zeros_like(x)
-    
-    mask = z > 1e-1  # 0보다 조금 큰 값 이상
-    z_m = z[mask]
-    
-    # Basden Formula: sqrt(lam / (g*x)) * exp(...) * I1(...)
-    # 수식: P(x) ~ (1/x) * exp(-x/g) 형태가 지배적임 (CIC의 경우)
-    # 여기서는 친구분이 언급한 Bessel 식을 그대로 씁니다.
-    
-    arg = 2 * np.sqrt(lam * z_m / gain)
-    val = (np.exp(-(z_m/gain + lam)) / np.sqrt(z_m * gain * lam)) * i1(arg)
-    
-    # Basden 항의 비중은 lam(CIC rate)에 비례
-    basden[mask] = val * lam  
-    
-    # 최종 모델: (Gaussian * (1-lam)) + (Basden * lam) 형태의 스케일링
-    # Fitting 편의상 A * Gauss + B * Basden 꼴로 단순화
-    return scale * ((1-lam)*gauss + 500 * basden) 
-    # 500은 Basden 값이 너무 작아서 fitting 시 무시되는 걸 막기 위한 가중치 (나중에 scale로 보정됨)
+# ==========================================
+# 1. 물리 상수 설정 (Experimental Constants)
+# ==========================================
+# 앞선 분석에서 Pre-amp Gain x1.0 모드임이 밝혀졌습니다.
+SENSITIVITY = 4.88  # e-/ADU (Sensitivity)
 
-def fit_real_data(tiff_path):
-    print(f"Loading {tiff_path}...")
+def basden_complete_model(x_adu, bias, sigma_adu, gain, lam, scale):
+    """
+    Physically Correct Basden + Gaussian Model
+    
+    x_adu     : ADU values (x axis)
+    bias      : Offset (ADU)
+    sigma_adu : Readout Noise Standard Deviation (ADU)
+    gain      : Real EM Gain (Dimensionless)
+    lam       : Total CIC Rate (electrons/pixel/frame)
+    scale     : Histogram Scaling Factor (Total count)
+    """
+    
+    # --- A. Gaussian Part (Readout Noise) ---
+    # 정규화된 PDF: 적분하면 1이 되어야 함
+    # 높이 = 1 / (sqrt(2pi) * sigma)
+    norm_gauss = 1.0 / (np.sqrt(2 * np.pi) * sigma_adu)
+    gauss_pdf = norm_gauss * np.exp(-0.5 * ((x_adu - bias) / sigma_adu)**2)
+    
+    # --- B. Basden Part (Amplified Signal) ---
+    # 1. 변수 변환: ADU -> Electron
+    x_e = (x_adu - bias) * SENSITIVITY
+    
+    # 2. Basden Formula 계산 (전자 도메인)
+    basden_pdf_e = np.zeros_like(x_adu)
+    
+    # 0.01 전자 이상인 영역만 계산 (수치 안정성)
+    mask = x_e > 1e-2 
+    
+    if np.any(mask):
+        z = x_e[mask]
+        
+        # Basden 식: p(x) = ...
+        term_exp = np.exp(-(z/gain + lam))
+        arg_bessel = 2 * np.sqrt(lam * z / gain)
+        denom = np.sqrt(gain * z * lam)
+        
+        # 분모 0 방지 및 계산
+        val = (term_exp / (denom + 1e-12)) * i1(arg_bessel)
+        
+        # [중요] 3. Jacobian 변환 (Electron -> ADU)
+        # P_adu(y) = P_e(x) * |dx/dy| where x = ky -> dx/dy = k
+        basden_pdf_e[mask] = val * SENSITIVITY 
+
+    # --- C. Combine ---
+    # Total PDF = (1 - lambda) * Gaussian + lambda * Basden
+    # lambda가 작으므로 (1-lambda)는 거의 1이지만, 엄밀함을 위해 포함
+    total_pdf = (1 - lam) * gauss_pdf + lam * basden_pdf_e
+    
+    return scale * total_pdf
+
+def analyze_background_noise(tiff_path):
+    print(f"Loading data from: {os.path.basename(tiff_path)}")
+    
+    # 1. 데이터 로드 및 전처리
     img = imread(tiff_path).astype(np.float32)
     data = img.reshape(-1)
     
-    # 1. 히스토그램 생성 (Fitting의 목표물)
-    # 데이터 범위를 보고 적절히 자릅니다 (너무 먼 Outlier 제외)
+    # Outlier 제거 (Fitting 안정성)
     vmin, vmax = np.percentile(data, 0.1), np.percentile(data, 99.9)
-    # 꼬리를 잘 보기 위해 bin을 넉넉히 잡습니다.
-    hist_y, bin_edges = np.histogram(data, bins=300, range=(vmin, vmax), density=True)
+    # 히스토그램 생성 (Density=True 필수)
+    hist_y, bin_edges = np.histogram(data, bins=200, range=(vmin, vmax), density=True)
     bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
     
-    # 2. 초기값 추정 (Initial Guess) - 이게 중요함!
-    # Bias: 데이터의 최빈값(Mode)
-    bias_init = bin_centers[np.argmax(hist_y)]
+    # 2. 초기값 추정 (Initial Guess)
+    bias_init = bin_centers[np.argmax(hist_y)]  # 최빈값
+    sigma_init = 25.0   # 이전 분석 결과 반영
+    gain_init = 285.0   # 이전 분석 결과 반영
+    lam_init = 0.05     # 정상적인 CIC 예상값
+    scale_init = 1.0    # Density=True이므로 1에 가까움 (하지만 자유도로 둠)
     
-    # Sigma: FWHM 등을 이용해서 대충 추정 (보통 10~50 사이)
-    sigma_init = 20.0 
-    
-    # Gain: 실험 셋팅값 (예: 300)
-    gain_init = 1000.0 
-    
-    # Lambda (CIC): 보통 0.01 ~ 0.1 사이 (매우 작음)
-    lam_init = 0.02
-    
-    # Scale: 히스토그램 최대값
-    scale_init = np.max(hist_y)
+    print(f"Initial Guess: Bias={bias_init:.1f}, Sig={sigma_init}, Gain={gain_init}")
 
-    print(f"Initial Guesses: Bias={bias_init:.1f}, Sig={sigma_init}, Gain={gain_init}, Lam={lam_init}")
+    # 3. Fitting (Log Space)
+    def log_objective(x, b, s, g, l, sc):
+        # Log fitting을 위해 모델값에 log를 취함
+        model_val = basden_complete_model(x, b, s, g, l, sc)
+        return np.log(np.maximum(model_val, 1e-20)) # log(0) 방지
     
-    def log_basden_model(x, bias, sigma, gain, lam, scale):
-        # 모델 값에 log를 취해서 반환 (0 방지 위해 clip)
-        val = basden_model_func(x, bias, sigma, gain, lam, scale)
-        return np.log(np.maximum(val, 1e-20))
-
     try:
-        # 실제 데이터에도 log를 취함 (0인 빈은 제외)
-        valid_mask = hist_y > 0
-        x_data = bin_centers[valid_mask]
-        y_data_log = np.log(hist_y[valid_mask])
+        # 데이터가 있는 빈만 선택
+        valid = hist_y > 0
+        x_fit = bin_centers[valid]
+        y_fit = np.log(hist_y[valid])
         
+        # Bounds 설정 (물리적 의미에 맞게)
         popt, pcov = curve_fit(
-            log_basden_model, 
-            x_data, 
-            y_data_log, 
+            log_objective, x_fit, y_fit,
             p0=[bias_init, sigma_init, gain_init, lam_init, scale_init],
             bounds=(
-                [bias_init-50, 1.0, 10.0, 0.0001, 0], # Lower bound
-                [bias_init+50, 200.0, 5000.0, 1.0, np.inf] # Upper bound
+                # Lower: Bias, Sig, Gain, Lam, Scale
+                [bias_init-50, 10.0, 200.0, 1e-5, 0],   
+                # Upper: Bias, Sig, Gain, Lam, Scale
+                [bias_init+50, 100.0, 500.0, 1.0, np.inf]
             )
         )
-
-        bias_fit, sigma_fit, gain_fit, lam_fit, scale_fit = popt
-        print("\n=== Fitting Results ===")
-        print(f"Bias Offset : {bias_fit:.2f}")
-        print(f"Readout Sig : {sigma_fit:.2f}")
-        print(f"EM Gain     : {gain_fit:.2f}")
-        print(f"CIC Lambda  : {lam_fit:.4f}")
-        print("=======================")
         
-        # 4. 결과 시각화
+        bias_f, sigma_f, gain_f, lam_f, scale_f = popt
+        
+        # 4. 결과 출력
+        print("\n" + "="*40)
+        print("   PHYSCIAL FITTING RESULTS (Final)   ")
+        print("="*40)
+        print(f"Sensitivity : {SENSITIVITY} e-/ADU (Fixed)")
+        print(f"Bias Offset : {bias_f:.2f} ADU")
+        print(f"Readout Sig : {sigma_f:.2f} ADU (-> {sigma_f*SENSITIVITY:.1f} e-)")
+        print(f"EM Gain     : {gain_f:.2f}")
+        print(f"CIC Lambda  : {lam_f:.4f} e-/pixel/frame")
+        print("="*40)
+        
+        # 5. 시각화
         plt.figure(figsize=(10, 6))
-        plt.semilogy(bin_centers, hist_y, 'k.', label='Real Data', alpha=0.5)
-        plt.semilogy(bin_centers, basden_model_func(bin_centers, *popt), 'r-', label='Fitted Basden Model')
-        plt.ylim(bottom=1e-6)
-        plt.title(f"Parameter Fitting Result\nGain={gain_fit:.0f}, CIC={lam_fit:.3f}, Sig={sigma_fit:.1f}")
-        plt.xlabel("ADU")
-        plt.ylabel("Probability (Log)")
+        
+        # Data
+        plt.semilogy(bin_centers, hist_y, 'o', color='gray', alpha=0.5, markersize=4, label='Data')
+        
+        # Total Fit
+        y_model = basden_complete_model(bin_centers, *popt)
+        plt.semilogy(bin_centers, y_model, 'r-', linewidth=2, label=f'Best Fit (CIC={lam_f:.4f})')
+        
+        # Components (분리해서 보여주기)
+        y_gauss = scale_f * (1-lam_f) * (1.0/(np.sqrt(2*np.pi)*sigma_f)) * np.exp(-0.5*((bin_centers-bias_f)/sigma_f)**2)
+        plt.semilogy(bin_centers, y_gauss, 'b--', linewidth=1, alpha=0.7, label='Readout Noise (Gauss)')
+        
+        plt.title(f"EMCCD Noise Analysis\nGain={gain_f:.1f}, $\sigma_{{read}}$={sigma_f:.1f}, $\lambda_{{CIC}}$={lam_f:.4f}")
+        plt.xlabel("Pixel Value (ADU)")
+        plt.ylabel("Probability Density (Log scale)")
         plt.legend()
-        plt.grid(True, alpha=0.3)
-        plt.savefig("fitting_result.png")
+        plt.grid(True, which="both", ls="-", alpha=0.2)
+        plt.tight_layout()
+        
+        save_path = "emccd_fitting_final.png"
+        plt.savefig(save_path, dpi=300)
+        print(f"Plot saved to: {save_path}")
         plt.show()
         
-        return bias_fit, sigma_fit, gain_fit, lam_fit
+        return bias_f, sigma_f, gain_f, lam_f
 
     except Exception as e:
-        print(f"Fitting failed: {e}")
-        return bias_init, sigma_init, gain_init, lam_init
+        print(f"Fitting Failed: {e}")
+        return None
 
-# 실행
-# tiff_path를 본인 경로로 수정하세요
-# bias, sigma, gain, lam = fit_real_data("./data_atom/background.tif")
+# ==========================================
+# 실행 부
+# ==========================================
 if __name__ == "__main__":
-    bg_stack_path = "./data_atom/data_atom_8_10_20_conseq/background.tif"
-    fit_real_data(bg_stack_path)
+    # 경로를 본인의 데이터 경로로 수정하세요
+    file_path = "./data_atom/data_atom_8_10_20_conseq/background.tif"
+    analyze_background_noise(file_path)

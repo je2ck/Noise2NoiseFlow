@@ -105,25 +105,23 @@ def plot_radial_psd(image, label, color, ax):
     # DC 성분(0번) 제외하고 그리기
     ax.plot(radialprofile[1:h//2], label=label, color=color, alpha=0.8, linewidth=2)
     
-    
-def sample_basden_emccd_frames(mean_frame_adu, n_frames, em_gain, sigma_read, bias_offset=457.84):
+def sample_basden_emccd_frames(mean_frame_adu, n_frames, em_gain, sigma_read, 
+                               bias_offset=457.84, sensitivity=4.88): # [New] sensitivity 추가
     """
-    Basden Model (Compound Poisson-Gamma) + Readout Noise를 이용해 샘플 생성
+    Basden Model (Compound Poisson-Gamma) + Readout Noise + Sensitivity Scaling
     
-    1. Input Photon: Poisson(lambda)
-    2. EM Amplification: Gamma(k, scale=gain) (Total sum of k exponentials)
-    3. Readout Noise: Gaussian(0, sigma)
-    
-    mean_frame_adu: (H,W) 평균 밝기 (이를 통해 입력 광자 수 lambda를 역산)
+    1. Input ADU -> Input Electrons: (Signal_ADU * sensitivity) / gain
+    2. EM Amplification (Electrons): Poisson -> Gamma
+    3. Output Electrons -> Output ADU: Electrons / sensitivity
     """
     H, W = mean_frame_adu.shape
     
     # 1. 입력 광자 수(Lambda) 역산 (ADU -> Electron)
-    # 가정: Mean Signal ≈ (Lambda * Gain) + Bias
-    # Lambda ≈ (Mean - Bias) / Gain
-    # 음수가 나오지 않도록 clip
-    lam_map = (mean_frame_adu - bias_offset) / em_gain
-    lam_map = np.maximum(lam_map, 1e-9) # 0 방지
+    # 관계식: Mean_ADU = Bias + (Lambda * Gain / Sensitivity)
+    # 따라서: Lambda = (Mean_ADU - Bias) * Sensitivity / Gain
+    signal_adu = mean_frame_adu - bias_offset
+    lam_map = (signal_adu * sensitivity) / em_gain
+    lam_map = np.maximum(lam_map, 1e-9) 
     
     # (N, H, W) 크기로 확장
     lam_expanded = np.repeat(lam_map[None, ...], n_frames, axis=0)
@@ -131,23 +129,25 @@ def sample_basden_emccd_frames(mean_frame_adu, n_frames, em_gain, sigma_read, bi
     # 2. Poisson Sampling (입력 전자 수)
     n_in = np.random.poisson(lam_expanded)
     
-    # 3. EM Gain Amplification (Gamma Sampling)
-    # n_in개의 전자가 각각 Exp(gain)을 따르므로, 합은 Gamma(n_in, gain)
-    # n_in = 0인 경우 Gamma는 0이어야 함.
-    # numpy.random.gamma는 shape=0일 때 0.0을 반환하거나 에러가 날 수 있으므로 마스킹 처리
+    # 3. EM Gain Amplification (Gamma Sampling - Electron Domain)
+    # shape: 입력 전자 수, scale: 증폭 이득
     n_out = np.zeros_like(n_in, dtype=np.float32)
     
     mask = n_in > 0
     if np.any(mask):
-        # shape: 입력 전자 수, scale: 증폭 이득
         n_out[mask] = np.random.gamma(shape=n_in[mask], scale=em_gain)
         
-    # 4. Readout Noise 더하기 & Bias 복구
+    # 4. Electrons -> ADU 변환 (Sensitivity 적용) [핵심 변경 사항]
+    # 증폭된 전자를 다시 디지털 숫자(ADU)로 변환
+    n_out_adu = n_out / sensitivity
+
+    # 5. Readout Noise 더하기 & Bias 복구
+    # sigma_read는 ADU 단위라고 가정합니다.
     readout = np.random.normal(loc=bias_offset, scale=sigma_read, size=(n_frames, H, W))
     
-    final_frame = n_out + readout
+    final_frame = n_out_adu + readout
     
-    return final_frame.astype(np.float32)
+    return final_frame.astype(np.float32)    
 
 def gaussian_fit_pmf(bins, samples):
     """
@@ -599,119 +599,14 @@ def pmf_with_common_bins(all_samples, samples_p, samples_q, num_bins=200):
     return bins, pmf_p, pmf_q
 
 
-def compare_gaussian_noise_model():
-    ckpt_path = "experiments/weights/best_model_real.pth"
-    bg_stack_path = "./data_atom/background.tif"  # (N,H,W) 또는 (H,W)
-
-    # ---------------------------------------------------
-    # 0) RAW background noise PMF (optional visualization)
-    # ---------------------------------------------------
-    bins_p, pmf_raw = compute_pmf_from_tiff_stack(
-        tiff_path=bg_stack_path,
-        num_bins=200,
-        subtract_mean=True,
-        roi=None,
-    )
-    visualize_pmf_save(
-        bins_p,
-        pmf_raw,
-        out_path="./noiseflow_viz/pmf_raw_background_stack.png",
-        title="PMF of Raw Background Stack"
-    )
-
-    # ---------------------------------------------------
-    # 1) NoiseFlow 전체 모델 로드
-    # ---------------------------------------------------
-    model, hps = load_trained_model_for_flow(ckpt_path, device="cuda")
-
-    # ---------------------------------------------------
-    # 2) Background mean (clean bg image) → bg_t
-    # ---------------------------------------------------
-    bg_t, denom = build_bg_mean_tensor(bg_stack_path, hps)
-
-    # ---------------------------------------------------
-    # 3) NoiseFlow noise 샘플 생성
-    # ---------------------------------------------------
-    noisy_norm, noise_norm = sample_noisy_bg_from_flow(
-        model,
-        bg_t,
-        n_samples=1024,
-    )
-
-    # ---------------------------------------------------
-    # 4) Background stack에서 noise samples 추출 (1D)
-    # ---------------------------------------------------
-    bg_norm_samples = extract_noise_samples_from_background(bg_stack_path)
-
-    # ---------------------------------------------------
-    # 5) NoiseFlow noise sample을 1D로 변환
-    # ---------------------------------------------------
-    # noise_norm: (N,H,W) normalized residual noise
-    # noise_norm: (N,H,W), 이미 (x - VMIN)/(VMAX - VMIN) 스케일이라고 가정
-    noise_norm_samples = noise_norm.reshape(-1).astype(np.float32)
-
-    # 배경과 마찬가지로 전체 평균 0으로 맞추기
-    noise_norm_samples = noise_norm_samples - noise_norm_samples.mean()
-
-    # ---------------------------------------------------
-    # 6) 공통 bins로 두 PMF 계산
-    # ---------------------------------------------------
-    all_samples = np.concatenate([bg_norm_samples, noise_norm_samples], axis=0)
-    bins, pmf_bg, pmf_nf = pmf_with_common_bins(
-        all_samples,
-        bg_norm_samples,
-        noise_norm_samples,
-        num_bins=200
-    )
-
-    # ---------------------------------------------------
-    # 7) KL(bg || noiseflow) 계산
-    # ---------------------------------------------------
-    KL = kl_divergence_pmf(bins, pmf_bg, bins, pmf_nf)
-    print("KL(background || NoiseFlow) =", KL)
-
-    # ---------------------------------------------------
-    # 8) PMF/PDF 시각화 (NoiseFlow 쪽)
-    # ---------------------------------------------------
-    # NoiseFlow에 대해만 PDF 계산
-    bins_nf, pmf_nf_single, pdf_nf_single = compute_pmf_pdf_from_images(
-    noise_norm, num_bins=200, subtract_mean=True
-    )
-    visualize_pmf_pdf_save(
-        bins_nf, pmf_nf_single, pdf_nf_single,
-        out_path="./noiseflow_viz/pmf_pdf_noiseflow_local.png",
-        title="NoiseFlow Noise (local bins)"
-    )
-
-    # ---------------------------------------------------
-    # 9) 예시 이미지 저장
-    # ---------------------------------------------------
-    save_example_images(
-        bg_t=bg_t,
-        noise_norm=noise_norm,
-        noisy_norm=noisy_norm,
-        denom=denom,
-        out_dir="./noiseflow_viz",
-        max_examples=1,
-    )
-
-    save_background_sample(bg_stack_path, out_dir="./noiseflow_viz")
-
-    # Gaussian fit PMF
-    pmf_gauss, mu_g, sigma_g = gaussian_fit_pmf(bins, bg_norm_samples)
-    KL_gauss = kl_divergence_pmf(bins, pmf_bg, bins, pmf_gauss)
-    print("KL(background || Gaussian) =", KL_gauss)
-
-    # 기존 NoiseFlow KL
-    KL_nf = kl_divergence_pmf(bins, pmf_bg, bins, pmf_nf)
-    print("KL(background || NoiseFlow) =", KL_nf)
-
 def compare_poisson_gaussian_noise_model(
     n_kl_samples=30,      
     Nf=512,               
     num_bins=200,
-    em_gain=42.66,        # [New] EM Gain 설정 (실험 조건에 맞게 변경: 300, 1000 등)
-    bias_offset=457.84       # [New] Bias (Offset) 설정. 보통 mean의 최솟값 혹은 캘리브레이션 값
+    em_gain=205.92,        # [New] EM Gain 설정 (실험 조건에 맞게 변경: 300, 1000 등)
+    bias_offset=457.80,       # [New] Bias (Offset) 설정. 보통 mean의 최솟값 혹은 캘리브레이션 값
+    sensitivity=4.88,      # [New] Sensitivity (ADU per electron)
+    fitted_cic_lambda=0.0418
 ):
     ckpt_path = "experiments/archive/8-10-20-conseq.pth"
     bg_stack_path = "./data_atom/data_atom_8_10_20_conseq/background.tif"
@@ -827,14 +722,13 @@ def compare_poisson_gaussian_noise_model(
         pg_samples = pg_syn.reshape(-1)
         
         # 피팅된 CIC Lambda 값 (0.0041)
-        fitted_cic_lambda = 0.0041 
         
         # sample_basden_emccd_frames 함수는 mean_frame을 받아서 lambda를 계산하도록 되어 있으므로,
         # lambda 값을 직접 받는 새로운 함수를 쓰거나, 
         # mean_frame 자리에 (fitted_cic_lambda * em_gain + bias_offset) 값을 가진 가짜 프레임을 넣어주면 됩니다.
         
         # 방법 1: 가짜 mean_frame을 만들어서 넘겨주기 (함수 수정 없이 가능)
-        synthetic_mean_val = (fitted_cic_lambda * em_gain) + bias_offset
+        synthetic_mean_val = bias_offset + (fitted_cic_lambda * em_gain / sensitivity)
         synthetic_mean_frame = np.full((H, W), synthetic_mean_val, dtype=np.float32)
         
         # (d) [New] Basden (EMCCD) Model
@@ -844,7 +738,8 @@ def compare_poisson_gaussian_noise_model(
             n_frames=Nf, 
             em_gain=em_gain, 
             sigma_read=sigma_read_basden,
-            bias_offset=bias_offset
+            bias_offset=bias_offset,
+            sensitivity=sensitivity
         )
         basden_samples = basden_syn.reshape(-1)
 
@@ -1015,15 +910,14 @@ def compare_poisson_gaussian_noise_model(
 
     # Basden (EMCCD)
     # 주의: synthetic_mean_frame은 위에서 정의한 것 사용
-    synthetic_mean_val = (0.0041 * 42.66) + 457.84 # lambda * gain + bias
     syn_mean_frame = np.full((64, 64), synthetic_mean_val, dtype=np.float32)
-
     bd_stack = sample_basden_emccd_frames(
         mean_frame_adu=syn_mean_frame,
         n_frames=N_test,
-        em_gain=42.66,
-        sigma_read=18.91,
-        bias_offset=457.84
+        em_gain=em_gain,
+        sigma_read=sigma_read_basden,
+        bias_offset=bias_offset,
+        sensitivity=sensitivity
     )
 
     # 3. Plotting
@@ -1046,5 +940,4 @@ def compare_poisson_gaussian_noise_model(
     
 
 if __name__ == "__main__":
-    # compare_gaussian_noise_model()
     compare_poisson_gaussian_noise_model()

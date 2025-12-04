@@ -7,6 +7,7 @@ import os
 import sys
 import types
 from scipy.stats import norm, poisson
+from scipy import fftpack
 
 # --- [Path Setup] ---
 sys.path.append("../") 
@@ -19,15 +20,16 @@ if not torch.cuda.is_available():
     torch.Tensor.cuda = _fake_cuda
     torch.nn.Module.cuda = _fake_cuda
 
-# --- 1. System Configuration ---
+# --- 1. System Configuration (수정됨) ---
 class SystemConfig:
     def __init__(self):
-        self.R_sc = 0.8e5       # Calibrated Rate
+        # Physics
+        self.R_sc = 1.69e5
         self.NA = 0.5
         self.wavelength = 556e-9
         self.pixel_size_um = 13.0
-        self.magnification = 20.0
-        self.T_optics = 0.8
+        self.magnification = 30.0
+        self.T_optics = 0.35
         self.QE = 0.9
         
         self.eta_geo = (1 - np.sqrt(1 - self.NA**2)) / 2
@@ -37,9 +39,14 @@ class SystemConfig:
         res_image_plane_um = res_object_plane * self.magnification * 1e6
         self.psf_sigma_px = ((res_image_plane_um / self.pixel_size_um) / 2.355) * 1.3
         
-        self.em_gain = 300.0    
-        self.sensitivity = 7.1  
-        self.bias_offset = 457.84
+        # Camera Parameters
+        self.em_gain = 205.92    
+        self.sensitivity = 4.88  
+        
+        # [수정] 오타 수정 및 누락된 파라미터 추가
+        self.bias_offset = 457.80   # bias_offeset -> bias_offset
+        self.cic_lambda = 0.0418    # Missing parameter added
+        self.readout_sigma = 19.05  # Missing parameter added
 
 # --- 2. NoiseFlow Loader ---
 def load_noiseflow_model(ckpt_path, device="cuda"):
@@ -72,7 +79,7 @@ def load_noiseflow_model(ckpt_path, device="cuda"):
     model.eval()
     return model, hps
 
-# --- 3. Noise Sampler ---
+# --- 3. Noise Samplers ---
 @torch.no_grad()
 def sample_noise_from_flow(model, hps, bg_mean_frame, n_samples=1):
     denom = float(GLOBAL_VMAX - GLOBAL_VMIN)
@@ -90,17 +97,61 @@ def sample_noise_from_flow(model, hps, bg_mean_frame, n_samples=1):
         noise_adu = eps_np * denom
         full_bg = bg_mean_frame + noise_adu
         noises.append(full_bg)
-        
     return np.stack(noises, axis=0)
 
-# --- 4. Signal Generator (Returns occupancy mask too) ---
+def sample_noise_from_basden(config, shape, n_samples=1):
+    H, W = shape
+    noises = []
+    eff_gain = config.em_gain / config.sensitivity
+    
+    for _ in range(n_samples):
+        n_in = np.random.poisson(config.cic_lambda, size=(H, W))
+        n_out = np.zeros_like(n_in, dtype=np.float32)
+        mask = n_in > 0
+        if np.any(mask):
+            n_out[mask] = np.random.gamma(shape=n_in[mask], scale=eff_gain)
+        
+        # [수정] 오타 수정된 변수명 사용
+        readout = np.random.normal(loc=config.bias_offset, scale=config.readout_sigma, size=(H, W))
+        full_bg = n_out + readout
+        noises.append(full_bg)
+    return np.stack(noises, axis=0)
+
+# --- Frequency Mixing ---
+def mix_noise_in_frequency(flow_batch, basden_batch, cutoff_radius=3.0):
+    B, H, W = flow_batch.shape
+    mixed_batch = []
+    
+    cy, cx = H // 2, W // 2
+    y, x = np.ogrid[-cy:H-cy, -cx:W-cx]
+    mask = (x**2 + y**2) <= cutoff_radius**2
+    
+    for i in range(B):
+        n_flow = flow_batch[i]
+        n_basden = basden_batch[i]
+        
+        f_flow = np.fft.fft2(n_flow)
+        f_basden = np.fft.fft2(n_basden)
+        
+        f_flow_s = np.fft.fftshift(f_flow)
+        f_basden_s = np.fft.fftshift(f_basden)
+        
+        f_mixed_s = f_flow_s * mask + f_basden_s * (1 - mask)
+        
+        f_mixed = np.fft.ifftshift(f_mixed_s)
+        n_mixed = np.fft.ifft2(f_mixed).real
+        
+        mixed_batch.append(n_mixed)
+        
+    return np.stack(mixed_batch, axis=0)
+
+
+# --- 4. Signal Generator ---
 def generate_atom_signal(config, t_exposure, grid_size=(64, 64), survival_prob=0.7):
     H, W = grid_size
     signal_canvas = np.zeros((H, W), dtype=np.float32)
-    
     mu_photons = config.R_sc * t_exposure * config.eta_total
     
-    # 격자 생성
     spacing = 16.0  
     n_grid = 4
     center_y, center_x = H / 2.0, W / 2.0
@@ -108,7 +159,7 @@ def generate_atom_signal(config, t_exposure, grid_size=(64, 64), survival_prob=0
     start_y = center_y - start_offset
     start_x = center_x - start_offset
     
-    atom_info_list = [] # [y, x, state]
+    atom_info_list = [] 
     thermal_jitter_px = 0.1
 
     for i in range(n_grid):
@@ -116,7 +167,6 @@ def generate_atom_signal(config, t_exposure, grid_size=(64, 64), survival_prob=0
             loc_y = start_y + i * spacing
             loc_x = start_x + j * spacing
             
-            # Occupancy Check
             is_occupied = 1 if np.random.random() < survival_prob else 0
             atom_info_list.append([loc_y, loc_x, is_occupied])
             
@@ -139,113 +189,87 @@ def generate_atom_signal(config, t_exposure, grid_size=(64, 64), survival_prob=0
                         yy, xx = np.meshgrid(np.arange(y_min, y_max), np.arange(x_min, x_max), indexing='ij')
                         dist_sq = (xx - x_jit)**2 + (yy - y_jit)**2
                         psf = np.exp(-dist_sq / (2 * config.psf_sigma_px**2))
-                        
                         psf_sum = psf.sum()
                         if psf_sum > 0: psf /= psf_sum
-                        
                         signal_canvas[y_min:y_max, x_min:x_max] += psf * n_electrons
 
     return signal_canvas, np.array(atom_info_list)
 
 # --- 5. Main Generation Pipeline ---
-def generate_flow_mock_data():
+def generate_mixed_mock_data():
     cfg = SystemConfig()
     device = "cuda" if torch.cuda.is_available() else "cpu"
     
-    # Model Load
     ckpt_path = "experiments/archive/8-10-20-conseq.pth"
     model, hps = load_noiseflow_model(ckpt_path, device)
     
-    # Background Load
     bg_path = "./data_atom/data_atom_8_10_20_conseq/background.tif"
     bg_arr = imread(bg_path).astype(np.float32)
     bg_mean = bg_arr.mean(axis=0) if bg_arr.ndim == 3 else bg_arr
 
-    # Settings
-    times = [2e-3, 3e-3, 4e-3, 5e-3, 6e-3, 8e-3] 
-    batch_size = 100 # Time당 생성할 이미지 수 (배치 크기)
+    # [디버깅] 신호 강도 확인용
+    print(f"Signal Rate check: R={cfg.R_sc:.1e}, Eta={cfg.eta_total:.4f}")
     
-    save_dir = "./mock_dataset_output"
+    times = [2e-3, 3e-3, 4e-3, 5e-3, 6e-3, 8e-3] 
+    batch_size = 100
+    mix_cutoff = 5.0 
+    
+    save_dir = "./mock_dataset_hybrid_output"
     os.makedirs(save_dir, exist_ok=True)
     
-    print(f"Generating Mock Data (Batch={batch_size}, Double Shot)...")
+    print(f"Generating Hybrid Mock Data... Saving to {save_dir}")
     
-    # Preview용 Figure 생성
     fig, axes = plt.subplots(1, len(times), figsize=(3*len(times), 4))
     if len(times) == 1: axes = [axes]
 
     for idx, t in enumerate(times):
         print(f"Processing Time: {t*1e3:.1f} ms...")
         
-        batch_images = []   # (Batch, 2, H, W)
-        batch_labels = []   # (Batch, 16) -> Occupancy (0/1)
-        fixed_positions = None # (16, 2) -> y, x 좌표 (모든 배치가 공유)
+        batch_images = []   
+        batch_labels = []   
+        fixed_positions = None 
 
         for b in range(batch_size):
-            # 1. Atom Geometry 생성 (점유 상태 결정)
             signal_e, atom_info = generate_atom_signal(cfg, t, survival_prob=0.7)
-            # atom_info: [N, 3] -> col 0:y, col 1:x, col 2:state
-            
             signal_adu = signal_e / cfg.sensitivity
             
-            # 2. Double Shot Noise 생성 (같은 신호 + 다른 노이즈 2장)
-            bg_frames = sample_noise_from_flow(model, hps, bg_mean, n_samples=2)
+            # [디버깅] 첫 배치에서 신호 레벨 출력
+            if b == 0 and idx == 0:
+                print(f"  -> Max Signal ADU: {signal_adu.max():.1f} (Noise Sigma ~{cfg.readout_sigma})")
             
-            # 3. Combine
-            img1 = np.clip(signal_adu + bg_frames[0], 0, 65535).astype(np.uint16)
-            img2 = np.clip(signal_adu + bg_frames[1], 0, 65535).astype(np.uint16)
+            bg_flow = sample_noise_from_flow(model, hps, bg_mean, n_samples=2)
+            bg_basden = sample_noise_from_basden(cfg, shape=(64,64), n_samples=2)
             
-            # Stack: (2, H, W)
-            double_shot = np.stack([img1, img2], axis=0)
-            batch_images.append(double_shot)
+            bg_mixed = mix_noise_in_frequency(bg_flow, bg_basden, cutoff_radius=mix_cutoff)
             
-            # Labels: (N_sites,)
-            occupancy = atom_info[:, 2].astype(np.uint8)
-            batch_labels.append(occupancy)
+            img1 = np.clip(signal_adu + bg_mixed[0], 0, 65535).astype(np.uint16)
+            img2 = np.clip(signal_adu + bg_mixed[1], 0, 65535).astype(np.uint16)
             
-            # Positions: (N_sites, 2) - 첫 번째 배치에서만 저장하면 됨 (격자는 고정이므로)
+            batch_images.append(np.stack([img1, img2], axis=0))
+            batch_labels.append(atom_info[:, 2].astype(np.uint8))
+            
             if b == 0:
-                fixed_positions = atom_info[:, :2] # y, x
+                fixed_positions = atom_info[:, :2]
 
-        # --- Batch 저장 ---
-        # Images: (Batch, 2, H, W)
-        final_imgs_arr = np.stack(batch_images, axis=0)
-        # Labels: (Batch, 16)
-        final_labels_arr = np.stack(batch_labels, axis=0)
+        final_imgs = np.stack(batch_images, axis=0) 
+        final_lbls = np.stack(batch_labels, axis=0)
         
-        # Save TIF (Image Stack)
-        tiff.imwrite(os.path.join(save_dir, f"images_{t*1e3:.0f}ms.tif"), final_imgs_arr)
-        
-        # Save Labels (NPY)
-        np.save(os.path.join(save_dir, f"labels_{t*1e3:.0f}ms.npy"), final_labels_arr)
-        
-        # Save Positions (NPY) - Time마다 하나씩 (사실 다 같지만 편의상)
+        tiff.imwrite(os.path.join(save_dir, f"images_{t*1e3:.0f}ms.tif"), final_imgs)
+        np.save(os.path.join(save_dir, f"labels_{t*1e3:.0f}ms.npy"), final_lbls)
         np.save(os.path.join(save_dir, f"positions_{t*1e3:.0f}ms.npy"), fixed_positions)
         
-        # --- Preview (첫 번째 배치의 첫 번째 샷만) ---
-        preview_img = final_imgs_arr[0, 0, :, :] # (H, W)
-        preview_occ = final_labels_arr[0]        # (16,)
-        preview_pos = fixed_positions            # (16, 2)
-        
+        # Preview (Contrast 조정)
+        # vmin을 Noise Bias(약 458) 근처로, vmax를 신호에 맞춰 조정
         ax = axes[idx]
-        ax.imshow(preview_img, cmap='gray', vmin=450, vmax=700)
-        
-        # Occupied (Red O) / Empty (Blue X)
-        # for k in range(len(preview_pos)):
-        #     y, x = preview_pos[k]
-        #     is_occ = preview_occ[k]
-        #     if is_occ:
-        #         ax.scatter(x, y, c='red', s=20, marker='o', facecolors='none', edgecolors='r')
-        #     else:
-        #         ax.scatter(x, y, c='blue', s=15, marker='x', alpha=0.5)
-                
-        ax.set_title(f"{t*1e3:.1f} ms")
+        # 신호가 약할 수 있으므로 vmax를 낮게 설정하여 원자가 잘 보이게 함
+        ax.imshow(final_imgs[0, 0], cmap='gray', vmin=450, vmax=700)
+        ax.set_title(f"{t*1e3:.1f}ms")
         ax.axis('off')
 
     plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, "preview_summary.png"))
-    plt.show()
-    print(f"Done. All batch files saved in '{save_dir}'")
+    plt.savefig(os.path.join(save_dir, "preview_hybrid.png"))
+    plt.close()
+    print("Done.")
 
 if __name__ == "__main__":
-    generate_flow_mock_data()
+    generate_mixed_mock_data()

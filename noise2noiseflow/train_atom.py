@@ -6,6 +6,7 @@ import re
 import shutil
 import socket
 import time
+import gc
 from typing import Dict, Tuple
 
 import numpy as np
@@ -953,14 +954,32 @@ def run_training(hps) -> None:
             )
 
     writer.close()
+    
+    del train_loader
+    del val_loader
+    del test_loader
+    del model
+    del optimizer
 
 
 def main(hps):
-    total_time = time.time()
-    run_training(hps)
-    total_time = time.time() - total_time
-    logging.info('Training finished in %.1fs', total_time)
-    logging.debug("Finished!")
+    try:
+        total_time = time.time()
+        run_training(hps)
+        total_time = time.time() - total_time
+        logging.info('Training finished in %.1fs', total_time)
+        logging.debug("Finished!")
+    except Exception as e:
+        logging.error(f"An error occurred: {e}")
+        raise e
+    finally:
+        # [핵심 수정] 명시적 자원 해제
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect() # 멀티프로세싱 시 공유 메모리 정리
+        
+        gc.collect() # Python GC 강제 수행
+        logging.info("Explicitly cleaned up CUDA/System resources.")
 
 
 if __name__ == "__main__":

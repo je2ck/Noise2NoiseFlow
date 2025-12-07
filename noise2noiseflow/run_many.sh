@@ -7,7 +7,7 @@ set -e
 TIMES=("2ms" "3ms" "4ms" "5ms" "6ms" "8ms")
 
 # 데이터가 위치한 루트 폴더 (이전에 생성한 mock data의 서브 폴더 경로)
-DATA_ROOT="./data_by_time" 
+DATA_ROOT="./data-mock-hybrid" 
 LOG_ROOT="experiments/paper" # 기본 로그 저장 경로 (train_atom.py 내부 로직 준수)
 
 for TIME in "${TIMES[@]}"
@@ -33,9 +33,9 @@ do
     python train_atom.py \
         --arch "unc|unc|unc|unc|gain|unc|unc|unc|unc" \
         --sidd_path "$CURRENT_DATA_PATH" \
-        --epochs 100 \
-        --n_batch_train 138 \
-        --n_batch_test 138 \
+        --epochs 200 \
+        --n_batch_train 8 \
+        --n_batch_test 8\
         --n_patches_per_image 1 \
         --patch_height 64 \
         --patch_sampling uniform \
@@ -44,7 +44,10 @@ do
         --lu_decomp \
         --logdir "$LOG_DIR_NAME" \
         --lmbda 262144 \
-        --no_resume
+        --no_resume \
+        --n_train_threads 0
+    
+    sleep 60
 
     echo ">>> Checkpoints and logs saved to ${LOG_ROOT}/${LOG_DIR_NAME}"
 done

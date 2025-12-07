@@ -339,21 +339,21 @@ def _build_custom_dataloaders(hps) -> Tuple[DataLoader, DataLoader, DataLoader, 
         batch_size=hps.n_batch_train,
         shuffle=True,
         num_workers=num_workers,
-        pin_memory=True,
+        pin_memory=False,
     )
     validation_loader = DataLoader(
         val_dataset,
         batch_size=hps.n_batch_test,
         shuffle=False,
         num_workers=max(0, num_workers // 2),
-        pin_memory=True,
+        pin_memory=False,
     )
     test_loader = DataLoader(
         test_dataset,
         batch_size=hps.n_batch_test,
         shuffle=False,
         num_workers=max(0, num_workers // 2),
-        pin_memory=True,
+        pin_memory=False,
     )
 
     first_batch = next(iter(train_loader))
@@ -430,8 +430,6 @@ def build_model_and_optimizer(hps) -> Tuple[Noise2NoiseFlow, torch.optim.Optimiz
 
     optimizer = torch.optim.Adam(model.parameters(), lr=hps.lr, betas=(0.9, 0.999), eps=1e-08)
     hps.num_params = int(np.sum([np.prod(params.shape) for params in model.parameters()]))
-    print("noiseflow num params: {}".format(int(np.sum([np.prod(params.shape) for params in model.noise_flow.parameters()]))))
-    print("Denoiser num params: {}".format(np.sum([np.prod(params.shape) for params in model.denoiser.parameters()])))
     logging.info(
         "Model ready | total params=%d | flow=%d | denoiser=%d | pretrained=%s",
         hps.num_params,
@@ -548,6 +546,8 @@ def train_one_epoch(model: Noise2NoiseFlow, optimizer: torch.optim.Optimizer, tr
                 nll,
                 mse,
             )
+        if n_patch % 500 == 0:
+            gc.collect()
 
     elapsed = time.time() - start
     logging.info(
@@ -916,26 +916,6 @@ def run_training(hps) -> None:
 
             writer.add_scalar('Sample Epoch KLD', kld_nf, epoch)
             writer.add_scalar('Sample Epoch NLL per dim', sm['loss_mean'], epoch)
-
-            # Console summary (kept close to original fields)
-            print(
-                "{}, epoch: {}, tr_loss: {:.3f}, val_loss : {:.3f} ts_loss: {:.3f}, ts_psnr: {:.2f}, sm_loss: {:.3f}, sm_kld: {:.4f}, tr_time: {:d}, val_time: {:d}, ts_time: {:d}, sm_time: {:d}, T_time: {:d}, best:{}".format(
-                    hps.logdirname,
-                    epoch,
-                    tr['loss_mean'],
-                    val['loss_mean'],
-                    ts['nll_mean'],
-                    ts['psnr_mean'],
-                    sm['loss_mean'],
-                    kld_nf,
-                    int(tr['time']),
-                    int(val['time']),
-                    int(ts['time']),
-                    int(sm['time']),
-                    int(tr['time'] + ts['time'] + sm['time']),
-                    is_best,
-                )
-            )
 
             logging.info(
                 "Epoch %d summary | train=%.4f | val=%.4f | test=%.4f | smpl=%.4f | best=%s",

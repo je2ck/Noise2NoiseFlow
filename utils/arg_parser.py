@@ -72,5 +72,8 @@ def arg_parser():
     parser.add_argument("--sigma", type=float, default=1/256, help="std of the zero mean noise vector z for recorruption")
     parser.add_argument("--pretrained_denoiser", default=False)
     
+    parser.add_argument('--vmin', type=float, default=410.0, help='Global VMIN for normalization')
+    parser.add_argument('--vmax', type=float, default=622.0, help='Global VMAX for normalization')
+    
     hps = parser.parse_args()  # So error if typo
     return hps

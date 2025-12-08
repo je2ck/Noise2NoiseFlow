@@ -68,8 +68,8 @@ GLOBAL_VMAX = 622  # 예: train 전체에서 99% 퍼센타일
 
 
 def _load_tif_atom(path: str,
-                   vmin: float = GLOBAL_VMIN,
-                   vmax: float = GLOBAL_VMAX) -> torch.Tensor:
+                   vmin: float,
+                   vmax: float) -> torch.Tensor:
     """
     Atom imaging용 TIFF 로더 (global vmin/vmax 사용).
 
@@ -152,11 +152,13 @@ def _crop_pair(noisy: torch.Tensor, clean: torch.Tensor, patch: int, stage: str)
 
 
 class PairedTifPatchDataset(Dataset):
-    def __init__(self, root_dir: str, stage: str, patch_size: int = None, patches_per_image: int = 1, desired_channels: int = 2):
+    def __init__(self, root_dir: str, stage: str, vmin: float, vmax: float, patch_size: int = None, patches_per_image: int = 1, desired_channels: int = 2):
         self.root_dir = root_dir
         self.stage = stage
         self.patch_size = patch_size
         self.patches_per_image = patches_per_image or 1
+        self.vmin=vmin
+        self.vmax=vmax
         pattern = os.path.join(self.root_dir, 'scene_*')
         self.samples = []
         for scene in sorted(glob.glob(pattern)):
@@ -178,8 +180,8 @@ class PairedTifPatchDataset(Dataset):
         noisy_path, clean_path = self.samples[scene_idx]
         if idx % max(self.patches_per_image, 1) == 0:
             logging.debug("Loading scene %d (%s, %s) for stage %s", scene_idx, noisy_path, clean_path, self.stage)
-        noisy = _load_tif_atom(noisy_path)
-        clean = _load_tif_atom(clean_path)
+        noisy = _load_tif_atom(noisy_path, vmin=self.vmin, vmax=self.vmax)
+        clean = _load_tif_atom(clean_path, vmin=self.vmin, vmax=self.vmax)
         noisy, clean = _crop_pair(noisy, clean, self.patch_size, self.stage)
         
         noisy = _ensure_channels(noisy, self.desired_channels)
@@ -314,22 +316,30 @@ def _build_custom_dataloaders(hps) -> Tuple[DataLoader, DataLoader, DataLoader, 
     patch = patch if patch else None
     patches_per_image = getattr(hps, 'n_patches_per_image', None) or 1
     num_workers = getattr(hps, 'n_train_threads', 0) or 0
+    vmin = getattr(hps, 'vmin', 410.0)
+    vmax = getattr(hps, 'vmax', 622.0)
 
     train_dataset = PairedTifPatchDataset(
         train_dir,
         stage='train',
+        vmin=vmin,
+        vmax=vmax,
         patch_size=patch,
         patches_per_image=patches_per_image,
     )
     val_dataset = PairedTifPatchDataset(
         val_dir,
         stage='val',
+        vmin=vmin,
+        vmax=vmax,
         patch_size=patch,
         patches_per_image=1,
     )
     test_dataset = PairedTifPatchDataset(
         val_dir,
         stage='eval',
+        vmin=vmin,
+        vmax=vmax,
         patch_size=patch,
         patches_per_image=1,
     )

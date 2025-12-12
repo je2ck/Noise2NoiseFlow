@@ -75,9 +75,9 @@ class BasdenFlowLayer(nn.Module):
         cdf_vals = np.clip(cdf_vals, 1e-6, 1.0 - 1e-6)
 
         # --- 3. Tensor 등록 ---
-        self.x_grid = torch.from_numpy(self.x_grid_np).to(device)
-        self.pdf_table = torch.from_numpy(pdf_vals).to(device)
-        self.cdf_table = torch.from_numpy(cdf_vals).to(device)
+        self.x_grid = torch.from_numpy(self.x_grid_np.astype(np.float32)).to(device)
+        self.pdf_table = torch.from_numpy(pdf_vals.astype(np.float32)).to(device)
+        self.cdf_table = torch.from_numpy(cdf_vals.astype(np.float32)).to(device)
 
     def _interp(self, x, x_data, y_data):
         """PyTorch 1D Linear Interpolation"""

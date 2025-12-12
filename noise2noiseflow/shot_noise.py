@@ -6,6 +6,8 @@ import matplotlib.pyplot as plt
 def get_efficiency(na, t_optics, qe):
     """Calculates geometric and total detection efficiency."""
     eta_geo = (1 - np.sqrt(1 - na**2)) / 2
+    # print(f"Calculated Geometric Efficiency (NA={na}): {eta_geo*100:.2f}%")
+    eta_geo = 0.08
     return eta_geo, eta_geo * t_optics * qe
 
 def calculate_scattering_rate(gamma_rad, delta_hz, s):
@@ -65,13 +67,13 @@ cfg_556 = {
     'scale_factor': 1e3,
     'time_range': np.logspace(np.log10(10e-6), np.log10(20e-3), 500),
     # System Parameters (Independent)
-    'NA': 0.6,
-    'T_optics': 0.8,
+    'NA': 0.5,
+    'T_optics': 0.45,
     'QE': 0.9, # sCMOS usually high in green
     # Atomic Physics
     'Gamma': 2 * np.pi * 182.4e3,
     'Delta': -160e3,
-    's': 1.7
+    's': 1.0
 }
 
 # Configuration for Yb 399nm (Blue)
@@ -83,7 +85,7 @@ cfg_399 = {
     'time_range': np.logspace(np.log10(0.1e-6), np.log10(20e-6), 500),
     # System Parameters (Independent)
     'NA': 0.6,      # Lens might have same NA, but verify coating
-    'T_optics': 0.8,
+    'T_optics': 0.4,
     'QE': 0.9,      # WARNING: sCMOS QE often drops at 400nm (check datasheet)
     # Atomic Physics
     'Gamma': 183.0e6, # approx 29 MHz * 2pi
@@ -91,11 +93,46 @@ cfg_399 = {
     's': 10
 }
 
+# Configuration 3: Saffman's Cs 852nm (The "Slow" Reference)
+# Source: arXiv:2311.12217
+cfg_cs = {
+    'name': 'Cs 852nm (Saffman)',
+    'color': 'red',
+    'unit': 'ms',
+    'scale_factor': 1e3,
+    'time_range': np.logspace(np.log10(10e-6), np.log10(20e-3), 500),
+    # System Parameters
+    'NA': 0.7,      # High NA lens used in the paper
+    'T_optics': 0.4,# Estimated
+    'QE': 0.9,     # EMCCD at 852nm
+    # Atomic Physics (Broad Line but suppressed)
+    'Gamma': 2 * np.pi * 5.2e6,  # 5.2 MHz (D2 line)
+    'Delta': 9 * 5.2e6,          # 9 * Gamma (HUGE Detuning for cooling)
+    's': 2.0                     # Assumed saturation for Molasses
+}
+
+thompson_yb = {
+    'name': 'yb 556nm (Thompson)',
+    'color': 'green',
+    'unit': 'ms',
+    'scale_factor': 1e3,
+    'time_range': np.logspace(np.log10(10e-6), np.log10(20e-3), 500),
+    # System Parameters
+    'NA': 0.55,      # High NA lens used in the paper
+    'T_optics': 0.9,# Estimated
+    'QE': 0.9,     
+    # Atomic Physics (Broad Line but suppressed)
+    'Gamma': 2 * np.pi * 182.4e3,  
+    'Delta': -2.1 * 182.4e3,          
+    's': 2 * 4.5 # dual tone?                     
+}
+
 # --- 3. Execution & Visualization ---
 plt.rcParams.update({'font.size': 12, 'font.family': 'sans-serif'})
 SNR_TARGET = 3.89
 
-configs = [cfg_556, cfg_399]
+# configs = [cfg_556, cfg_399, cfg_cs]
+configs = [thompson_yb]
 
 for cfg in configs:
     # 1. Calculate Efficiency
@@ -110,7 +147,7 @@ for cfg in configs:
 
     # 3. Plot
     fig, (ax_v, ax_s) = plt.subplots(2, 1, figsize=(8, 8), sharex=True)
-    fig.suptitle(f"{cfg['name']} Imaging Performance (SNR={SNR_TARGET})", fontsize=14)
+    fig.suptitle(f"{cfg['name']} Imaging Performance (SNR={SNR_TARGET})\n(NA={cfg['NA']}, T={cfg['T_optics']}, QE={cfg['QE']})", fontsize=14)
     
     t_min = plot_performance(ax_v, ax_s, cfg, R_sc, eta_tot, SNR_TARGET)
     

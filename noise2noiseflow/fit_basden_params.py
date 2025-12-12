@@ -11,53 +11,51 @@ import os
 # 앞선 분석에서 Pre-amp Gain x1.0 모드임이 밝혀졌습니다.
 SENSITIVITY = 4.88  # e-/ADU (Sensitivity)
 
+
 def basden_complete_model(x_adu, bias, sigma_adu, gain, lam, scale):
     """
-    Physically Correct Basden + Gaussian Model
-    
-    x_adu     : ADU values (x axis)
-    bias      : Offset (ADU)
-    sigma_adu : Readout Noise Standard Deviation (ADU)
-    gain      : Real EM Gain (Dimensionless)
-    lam       : Total CIC Rate (electrons/pixel/frame)
-    scale     : Histogram Scaling Factor (Total count)
+    Physically Correct Basden + Gaussian Model (Corrected)
     """
     
-    # --- A. Gaussian Part (Readout Noise) ---
-    # 정규화된 PDF: 적분하면 1이 되어야 함
-    # 높이 = 1 / (sqrt(2pi) * sigma)
+    # --- A. Gaussian Part (Readout Noise for 0 photons) ---
+    # 0개 광자가 들어올 확률 = e^(-lambda)
+    # 따라서 가우시안의 높이는 (1/sqrt(2pi*sigma)) * e^(-lambda) 가 되어야 함
     norm_gauss = 1.0 / (np.sqrt(2 * np.pi) * sigma_adu)
-    gauss_pdf = norm_gauss * np.exp(-0.5 * ((x_adu - bias) / sigma_adu)**2)
     
-    # --- B. Basden Part (Amplified Signal) ---
+    # [수정 1] 가중치를 (1-lam) 근사식 대신 정확한 exp(-lam) 사용
+    prob_zero = np.exp(-lam) 
+    gauss_pdf = prob_zero * norm_gauss * np.exp(-0.5 * ((x_adu - bias) / sigma_adu)**2)
+    
+    # --- B. Basden Part (Amplified Signal for >0 photons) ---
     # 1. 변수 변환: ADU -> Electron
     x_e = (x_adu - bias) * SENSITIVITY
     
-    # 2. Basden Formula 계산 (전자 도메인)
     basden_pdf_e = np.zeros_like(x_adu)
-    
-    # 0.01 전자 이상인 영역만 계산 (수치 안정성)
     mask = x_e > 1e-2 
     
     if np.any(mask):
         z = x_e[mask]
         
-        # Basden 식: p(x) = ...
+        # [수정 2] Basden Formula 수식 교정
+        # 이전: denom에 lam이 들어감 (오류) -> denom = np.sqrt(gain * z * lam)
+        # 수정: 분자에 sqrt(lam)을 곱하고, 분모에서는 뺌
+        
+        # P(x) = [sqrt(lam) / sqrt(gx)] * exp(...) * I1(...)
+        
+        term_coef = np.sqrt(lam) / (np.sqrt(gain * z) + 1e-12)
         term_exp = np.exp(-(z/gain + lam))
         arg_bessel = 2 * np.sqrt(lam * z / gain)
-        denom = np.sqrt(gain * z * lam)
         
-        # 분모 0 방지 및 계산
-        val = (term_exp / (denom + 1e-12)) * i1(arg_bessel)
+        val = term_coef * term_exp * i1(arg_bessel)
         
-        # [중요] 3. Jacobian 변환 (Electron -> ADU)
-        # P_adu(y) = P_e(x) * |dx/dy| where x = ky -> dx/dy = k
+        # 3. Jacobian 변환 (Electron -> ADU)
         basden_pdf_e[mask] = val * SENSITIVITY 
 
     # --- C. Combine ---
-    # Total PDF = (1 - lambda) * Gaussian + lambda * Basden
-    # lambda가 작으므로 (1-lambda)는 거의 1이지만, 엄밀함을 위해 포함
-    total_pdf = (1 - lam) * gauss_pdf + lam * basden_pdf_e
+    # [수정 3] Basden 식 자체에 이미 e^(-lam) 등 확률 정보가 포함되어 있음.
+    # 따라서 여기서 'lam'을 곱하면 안 됩니다. (더하기만 해야 함)
+    
+    total_pdf = gauss_pdf + basden_pdf_e
     
     return scale * total_pdf
 

@@ -606,8 +606,18 @@ def compare_poisson_gaussian_noise_model(
     em_gain=205.92,        # [New] EM Gain 설정 (실험 조건에 맞게 변경: 300, 1000 등)
     bias_offset=457.80,       # [New] Bias (Offset) 설정. 보통 mean의 최솟값 혹은 캘리브레이션 값
     sensitivity=4.88,      # [New] Sensitivity (ADU per electron)
-    fitted_cic_lambda=0.0418
+    fitted_cic_lambda=0.0418,
+    sigma_read_basden=19.05
 ):
+    
+    # (C) [New] Basden Model Parameter - sigma-read-basden
+    # Basden 모델에서 Readout Noise(sigma_read)는 
+    # 보통 EM Gain이 적용되지 않은 순수 회로 노이즈입니다.
+    # 여기서는 데이터의 variance에서 Shot noise 성분을 뺀 나머지를 추정하거나
+    # 카메라 스펙의 readout noise를 넣어야 합니다.
+    # 약식으로: Var_total approx (2 * Mean * Gain) + Sigma_read^2 (High gain approx)
+    # 하지만 여기선 그냥 작은 값 혹은 G/PG와 비슷한 수준으로 가정해봅니다.
+    
     ckpt_path = "experiments/archive/8-10-20-conseq.pth"
     bg_stack_path = "./data_atom/data_atom_8_10_20_conseq/background.tif"
     out_dir = "./noiseflow_viz"
@@ -643,15 +653,6 @@ def compare_poisson_gaussian_noise_model(
     lam_pg  = max(mean_bg, 1e-6)
     sigma2_pg = max(var_bg - lam_pg, 1e-12)
     sig_pg  = np.sqrt(sigma2_pg)
-    
-    # (C) [New] Basden Model Parameter
-    # Basden 모델에서 Readout Noise(sigma_read)는 
-    # 보통 EM Gain이 적용되지 않은 순수 회로 노이즈입니다.
-    # 여기서는 데이터의 variance에서 Shot noise 성분을 뺀 나머지를 추정하거나
-    # 카메라 스펙의 readout noise를 넣어야 합니다.
-    # 약식으로: Var_total approx (2 * Mean * Gain) + Sigma_read^2 (High gain approx)
-    # 하지만 여기선 그냥 작은 값 혹은 G/PG와 비슷한 수준으로 가정해봅니다.
-    sigma_read_basden = 18.91 # 예시: 50 ADU (실험값에 맞춰 수정 필요)
 
     # -----------------------------
     # 3) NoiseFlow 로드

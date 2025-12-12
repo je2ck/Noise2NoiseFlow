@@ -11,15 +11,15 @@ class BasdenFlowLayer(nn.Module):
         self.name = "BasdenPhysicalLayer"
         
         # --- 1. 물리 파라미터 로드 ---
-        self.bias = config.bias_offset
-        self.sigma = config.readout_sigma # ADU 단위
+        self.bias = config['bias_offset']
+        self.sigma = config['readout_sigma'] # ADU 단위
         
         # [중요] Gain과 Sensitivity의 단위 명확화
         # config.em_gain: 순수 증폭 배율 (예: 300)
         # config.sensitivity: e-/ADU (예: 4.88)
-        self.real_gain = config.em_gain 
-        self.sens = config.sensitivity 
-        self.lam = config.cic_lambda
+        self.real_gain = config['em_gain']
+        self.sens = config['sensitivity']
+        self.lam = config['cic_lambda']
 
         # --- 2. Look-up Table 생성 (Correct Basden PDF) ---
         # 꼬리 부분(Tail)까지 충분히 커버하기 위해 x_grid를 촘촘하게 설정

@@ -19,8 +19,8 @@ class NoiseFlow(nn.Module):
         self.param_inits = param_inits
         self.decomp = lu_decomp
         self.device = device
-        self.model = nn.ModuleList(self.noise_flow_arch(x_shape))
         self.basden_config = basden_config
+        self.model = nn.ModuleList(self.noise_flow_arch(x_shape))
 
     def noise_flow_arch(self, x_shape):
         arch_lyrs = self.arch.split('|')  # e.g., unc|sdn|unc|gain|unc

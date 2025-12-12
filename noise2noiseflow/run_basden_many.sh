@@ -53,7 +53,7 @@ do
     echo "=========================================="
 
     # 로그 디렉토리 이름 (예: n2nf_2ms)
-    LOG_DIR_NAME="n2nf_${TIME}" 
+    LOG_DIR_NAME="n2nf_basden_${TIME}" 
 
     # 실제 데이터 경로 (예: ./data-mock-hybrid/2ms)
     CURRENT_DATA_PATH="${DATA_ROOT}/${TIME}" 
@@ -67,7 +67,7 @@ do
     # 2. Python 실행 (--vmin, --vmax 인자 추가됨)
     # --------------------------------------------------------------
     python train_atom.py \
-        --arch "unc|unc|unc|unc|gain|unc|unc|unc|unc" \
+        --arch "basden|unc|unc|unc|unc|gain|unc|unc|unc|unc" \
         --sidd_path "$CURRENT_DATA_PATH" \
         --epochs 200 \
         --n_batch_train 8 \

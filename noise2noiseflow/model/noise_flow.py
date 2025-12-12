@@ -7,6 +7,7 @@ from model.flow_layers.affine_coupling import AffineCoupling, ShiftAndLogScale
 from model.flow_layers.signal_dependant import SignalDependant
 from model.flow_layers.gain import Gain
 from model.flow_layers.utils import SdnModelScale
+from model.flow_layers.basden import BasdenFlowLayer
 # from model.flow_layers.linear_transformation import LinearTransformation
 
 class NoiseFlow(nn.Module):
@@ -19,12 +20,26 @@ class NoiseFlow(nn.Module):
         self.decomp = lu_decomp
         self.device = device
         self.model = nn.ModuleList(self.noise_flow_arch(x_shape))
+        self.basden_config = {'bias_offset': param_inits['basden_bias_offset'],
+                              'readout_sigma': param_inits['basden_readout_sigma'],
+                              'em_gain': param_inits['basden_em_gain'],
+                              'sensitivity': param_inits['basden_sensitivity'],
+                              'cic_lambda': param_inits['basden_cic_lambda']}
 
     def noise_flow_arch(self, x_shape):
         arch_lyrs = self.arch.split('|')  # e.g., unc|sdn|unc|gain|unc
         bijectors = []
         for i, lyr in enumerate(arch_lyrs):
             is_last_layer = False
+            
+            if lyr == 'basden':
+                print('|-BasdenFlowLayer')
+                bijectors.append(
+                    BasdenFlowLayer(
+                        config=self.basden_config,
+                        device=self.device
+                    )
+                )
 
             if lyr == 'unc':
                 if self.flow_permutation == 0:

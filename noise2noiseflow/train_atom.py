@@ -408,6 +408,8 @@ def compute_patch_stats_and_baselines(hps, test_loader: DataLoader, x_shape: Tup
 def basden_params(hps):
     """Initialize Basden layer parameters."""
     basden_params = {
+        'vmin': hps.vmin,
+        'vmax': hps.vmax,
         'bias_offset': hps.basden_bias_offset,
         'readout_sigma': hps.basden_readout_sigma,
         'em_gain': hps.basden_em_gain,

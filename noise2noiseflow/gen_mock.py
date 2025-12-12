@@ -29,10 +29,11 @@ class SystemConfig:
         self.wavelength = 556e-9
         self.pixel_size_um = 13.0
         self.magnification = 30.0
-        self.T_optics = 0.35
+        self.T_optics = 0.3
         self.QE = 0.9
         
-        self.eta_geo = (1 - np.sqrt(1 - self.NA**2)) / 2
+        # self.eta_geo = (1 - np.sqrt(1 - self.NA**2)) / 2
+        self.eta_geo = 0.08  # 고정된 값으로 설정
         self.eta_total = self.eta_geo * self.T_optics * self.QE
         
         res_object_plane = 0.61 * self.wavelength / self.NA
@@ -211,7 +212,7 @@ def generate_mixed_mock_data():
     print(f"Signal Rate check: R={cfg.R_sc:.1e}, Eta={cfg.eta_total:.4f}")
     
     times = [2e-3, 3e-3, 4e-3, 5e-3, 6e-3, 8e-3] 
-    batch_size = 100
+    batch_size = 20000
     mix_cutoff = 5.0 
     
     save_dir = "./mock_dataset_hybrid_output"
@@ -271,5 +272,29 @@ def generate_mixed_mock_data():
     plt.close()
     print("Done.")
 
+
+def generate_bg_only(n_frames=100):
+    # 1. 설정 및 모델 로드 (경로는 기존과 동일하게)
+    cfg = SystemConfig()
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model, hps = load_noiseflow_model("experiments/archive/8-10-20-conseq.pth", device)
+    
+    # 2. 배경 템플릿 로드
+    bg_arr = imread("./data_atom/data_atom_8_10_20_conseq/background.tif")
+    bg_mean = bg_arr.mean(axis=0) if bg_arr.ndim == 3 else bg_arr
+
+    # 3. 노이즈 생성 및 합성 (Atom Signal 부분만 뺌)
+    print(f"Generating {n_frames} Background Frames...")
+    bg_flow = sample_noise_from_flow(model, hps, bg_mean, n_samples=n_frames)
+    bg_basden = sample_noise_from_basden(cfg, shape=(64, 64), n_samples=n_frames)
+    bg_mixed = mix_noise_in_frequency(bg_flow, bg_basden, cutoff_radius=5.0)
+
+    # 4. 저장 (uint16 변환 필수)
+    save_path = "./mock_dataset_hybrid_output/pure_bg_stack.tif"
+    tiff.imwrite(save_path, np.clip(bg_mixed, 0, 65535).astype(np.uint16))
+    print(f"Saved: {save_path}")
+    
+
 if __name__ == "__main__":
     generate_mixed_mock_data()
+    generate_bg_only(n_frames=100)

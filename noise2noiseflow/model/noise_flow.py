@@ -12,7 +12,7 @@ from model.flow_layers.basden import BasdenFlowLayer
 
 class NoiseFlow(nn.Module):
 
-    def __init__(self, x_shape, arch, flow_permutation, param_inits, lu_decomp, device='cuda', *_, **__):
+    def __init__(self, x_shape, arch, flow_permutation, param_inits, basden_config, lu_decomp, device='cuda', *_, **__):
         super(NoiseFlow, self).__init__()
         self.arch = arch
         self.flow_permutation = flow_permutation
@@ -20,11 +20,7 @@ class NoiseFlow(nn.Module):
         self.decomp = lu_decomp
         self.device = device
         self.model = nn.ModuleList(self.noise_flow_arch(x_shape))
-        self.basden_config = {'bias_offset': param_inits['basden_bias_offset'],
-                              'readout_sigma': param_inits['basden_readout_sigma'],
-                              'em_gain': param_inits['basden_em_gain'],
-                              'sensitivity': param_inits['basden_sensitivity'],
-                              'cic_lambda': param_inits['basden_cic_lambda']}
+        self.basden_config = basden_config
 
     def noise_flow_arch(self, x_shape):
         arch_lyrs = self.arch.split('|')  # e.g., unc|sdn|unc|gain|unc

@@ -17,11 +17,11 @@ def batch_PSNR(img, imclean, data_range):
     return (PSNR/Img.shape[0])
 
 class Noise2NoiseFlow(nn.Module):
-    def __init__(self, x_shape, arch, flow_permutation, param_inits, lu_decomp,
+    def __init__(self, x_shape, arch, flow_permutation, param_inits, lu_decomp, basden_config,
                  denoiser_model='dncnn', dncnn_num_layers=9, lmbda=262144, device='cuda'):
         super(Noise2NoiseFlow, self).__init__()
 
-        self.noise_flow = NoiseFlow(x_shape, arch, flow_permutation, param_inits, lu_decomp, device=device)
+        self.noise_flow = NoiseFlow(x_shape, arch, flow_permutation, param_inits, basden_config, lu_decomp, device=device)
         if denoiser_model == 'dncnn':
             self.denoiser = DnCNN(x_shape[0], dncnn_num_layers)
             # TODO: self.dncnn should be named self.denoiser by definition, but I changed it here since i needed it to be backward compatible for loading previous models for sampling.

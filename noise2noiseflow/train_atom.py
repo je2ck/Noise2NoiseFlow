@@ -63,9 +63,6 @@ def _load_tif(path: str) -> torch.Tensor:
     logging.debug("Normalized TIFF %s to tensor shape %s", path, array.shape)
     return torch.from_numpy(array)
 
-GLOBAL_VMIN = 410   # 예: train 전체에서 1% 퍼센타일
-GLOBAL_VMAX = 622  # 예: train 전체에서 99% 퍼센타일
-
 
 def _load_tif_atom(path: str,
                    vmin: float,
@@ -408,18 +405,31 @@ def compute_patch_stats_and_baselines(hps, test_loader: DataLoader, x_shape: Tup
     return pat_stats, nll_gauss, nll_sdn
 
 
+def basden_params(hps):
+    """Initialize Basden layer parameters."""
+    basden_params = {
+        'bias_offset': hps.basden_bias_offset,
+        'readout_sigma': hps.basden_readout_sigma,
+        'em_gain': hps.basden_em_gain,
+        'sensitivity': hps.basden_sensitivity,
+        'cic_lambda': hps.basden_cic_lambda,
+    }
+    return basden_params
+
 # ------------------------------
 # Model
 # ------------------------------
 def build_model_and_optimizer(hps) -> Tuple[Noise2NoiseFlow, torch.optim.Optimizer]:
     """Create model, optionally load a pretrained denoiser, move to device, and create optimizer."""
     hps.param_inits = init_params()
+    hps.basden_params = basden_params(hps)
     model = Noise2NoiseFlow(
         hps.x_shape[1:],
         arch=hps.arch,
         flow_permutation=hps.flow_permutation,
         param_inits=hps.param_inits,
         lu_decomp=hps.lu_decomp,
+        basden_config=hps.basden_params,
         denoiser_model=hps.denoiser,
         dncnn_num_layers=9,
         lmbda=hps.lmbda,

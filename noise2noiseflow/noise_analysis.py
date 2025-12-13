@@ -13,7 +13,7 @@ import sys
 sys.path.append("../")
 
 from model.noise2noise_flow import Noise2NoiseFlow
-from train_atom import init_params, _ensure_channels, GLOBAL_VMIN, GLOBAL_VMAX
+from train_atom import init_params, _ensure_channels
 import types
 
 
@@ -245,35 +245,26 @@ def compute_pmf_from_tiff_stack(
 
     return bins, pmf
 
-def visualize_pmf_save(bins, pmf, out_path, title="PMF of Noise Distribution"):
-    centers = 0.5 * (bins[:-1] + bins[1:])  # bin 중심
-
-    plt.figure(figsize=(10, 5))
-
-    plt.plot(centers, pmf, '-o', markersize=2, label='PMF (line)')
-    plt.bar(centers, pmf, width=np.diff(bins), alpha=0.3, label='PMF (bar)')
-    plt.step(bins[:-1], pmf, where='post', color='red', alpha=0.5, label='PMF (step)')
-
-    plt.xlabel("Noise / Pixel Value")
-    plt.ylabel("Probability (pmf)")
-    plt.title(title)
-    plt.grid(True, alpha=0.4)
-    plt.legend()
-    plt.tight_layout()
-
-    # 화면에 띄우지 않고 저장만
-    plt.savefig(out_path, dpi=200)
-    plt.close()
-
-    print(f"[saved PMF figure] -> {out_path}")
-
 
 # ----------------------
 # 1) 하이퍼파라미터 & 모델 로드 (flow까지 포함)
 # ----------------------
-def build_hps(device="cuda"):
+def build_hps(args, device="cuda"):
     hps = types.SimpleNamespace()
-    hps.arch = "unc|unc|unc|unc|gain|unc|unc|unc|unc"
+    if args.basden:
+        hps.arch = "basden|unc|unc|unc|unc|gain|unc|unc|unc|unc"
+        hps.basden_config = {
+            'vmin': args.vmin,
+            'vmax': args.vmax,
+            'bias_offset': args.bias_offset,
+            'readout_sigma': args.sigma_read_basden,
+            'em_gain': args.em_gain,
+            'sensitivity': args.sensitivity,
+            'cic_lambda': args.fitted_cic_lambda,
+        }
+    else:
+        hps.arch = "unc|unc|unc|unc|gain|unc|unc|unc|unc"
+        hps.basden_config = None
     hps.flow_permutation = 1 
     hps.lu_decomp = True
     hps.denoiser = "dncnn"
@@ -285,12 +276,12 @@ def build_hps(device="cuda"):
     return hps
 
 
-def load_trained_model_for_flow(ckpt_path: str, device="cuda"):
+def load_trained_model_for_flow(args, ckpt_path: str, device="cuda"):
     """
     기존 load_trained_model은 denoiser.*만 로드하니까,
     flow까지 포함해서 전체 state_dict를 읽는 버전.
     """
-    hps = build_hps(device=device)
+    hps = build_hps(args, device=device)
     param_inits = init_params()
     model = Noise2NoiseFlow(
         hps.x_shape[1:],
@@ -298,6 +289,7 @@ def load_trained_model_for_flow(ckpt_path: str, device="cuda"):
         flow_permutation=hps.flow_permutation,
         param_inits=param_inits,
         lu_decomp=hps.lu_decomp,
+        basden_config=hps.basden_config,
         denoiser_model=hps.denoiser,
         dncnn_num_layers=9,
         lmbda=hps.lmbda,
@@ -311,34 +303,6 @@ def load_trained_model_for_flow(ckpt_path: str, device="cuda"):
     model.to(hps.device)
     model.eval()
     return model, hps
-
-
-# ----------------------
-# 2) background 스택에서 bg mean (클린 배경) 만들기
-# ----------------------
-def build_bg_mean_tensor(bg_tif_path: str, hps):
-    """
-    bg_tif_path: (N,H,W) 또는 (H,W) background raw TIF
-    return: bg_mean_t (1,C,H,W), [0,1] normalized, hps.device
-    """
-    arr = imread(bg_tif_path).astype(np.float32)  # (N,H,W) or (H,W)
-
-    if arr.ndim == 2:
-        arr = arr[None, ...]  # (1,H,W)
-
-    # (N,H,W) → mean over frames → (H,W)
-    bg_mean_raw = arr.mean(axis=0)
-
-    # 학습과 동일 정규화: (x - VMIN) / (VMAX - VMIN)
-    denom = float(GLOBAL_VMAX - GLOBAL_VMIN)
-    bg_mean_norm = (bg_mean_raw - GLOBAL_VMIN) / denom
-    bg_mean_norm = np.clip(bg_mean_norm, 0.0, 1.0).astype(np.float32)  # (H,W)
-
-    # (H,W) → (1,H,W) → _ensure_channels → (C,H,W) → (1,C,H,W)
-    bg_t = torch.from_numpy(bg_mean_norm).unsqueeze(0)           # (1,H,W)
-    bg_t = _ensure_channels(bg_t, C=hps.x_shape[1])              # (C,H,W)
-    bg_t = bg_t.unsqueeze(0).to(hps.device)                      # (1,C,H,W)
-    return bg_t, denom
 
 
 # ----------------------
@@ -448,95 +412,6 @@ def save_background_sample(bg_tif_path, out_dir="./noiseflow_viz"):
     # )
 
     print("[saved original background image]")
-    
-def visualize_pmf_pdf_save(bins, pmf, pdf, out_path, title="Noise PMF/PDF"):
-    centers = 0.5 * (bins[:-1] + bins[1:])
-
-    plt.figure(figsize=(10, 5))
-    plt.plot(centers, pmf, '-o', markersize=2, label='PMF (discrete)', alpha=0.8)
-    plt.plot(centers, pdf, '-', label='PDF (density=True)', alpha=0.8)
-    plt.xlabel("Noise / Pixel Value")
-    plt.ylabel("Probability / Density")
-    plt.title(title)
-    plt.grid(True, alpha=0.4)
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(out_path, dpi=200)
-    plt.close()
-    
-def save_example_images(
-    bg_t,
-    noise_norm,
-    noisy_norm,
-    denom,
-    out_dir="./noiseflow_viz",
-    max_examples=4,
-):
-    """
-    bg_t      : (1,C,H,W), [0,1]
-    noise_norm: (N,H,W),   [0,1] (bg 기준 noise)
-    noisy_norm: (N,H,W),   [0,1] (bg + noise)
-    denom     : (GLOBAL_VMAX - GLOBAL_VMIN)
-    out_dir   : 저장 폴더
-    """
-    os.makedirs(out_dir, exist_ok=True)
-
-    # ---- 1) bg_mean (정규화 & raw 둘 다) ----
-    bg_norm = bg_t[:, 0, :, :].squeeze(0).detach().cpu().numpy()  # (H,W), [0,1]
-    bg_raw  = bg_norm * denom + GLOBAL_VMIN                       # (H,W), raw 스케일
-
-    # PNG (보기용)
-    plt.figure()
-    plt.imshow(bg_norm, cmap="gray")
-    plt.colorbar()
-    plt.title("Background mean (normalized)")
-    plt.tight_layout()
-    plt.savefig(os.path.join(out_dir, "bg_mean_norm.png"), dpi=200)
-    plt.close()
-
-    # # TIF (raw 스케일)
-    # tiff.imwrite(
-    #     os.path.join(out_dir, "bg_mean_raw.tif"),
-    #     bg_raw.astype(np.uint16),
-    # )
-
-    # ---- 2) noise / noisy 예시 이미지 몇 장 저장 ----
-    N, H, W = noise_norm.shape
-    n_save = min(max_examples, N)
-
-    for i in range(n_save):
-        noise_i = noise_norm[i]      # (H,W), [0,1] 기준 noise
-        noisy_i = noisy_norm[i]      # (H,W), [0,1] noisy image
-
-        # 보기용 PNG (noise는 contrast 때문에 mean 0 근처일 수 있어서 조금 조심)
-        plt.figure(figsize=(8, 3))
-
-        plt.subplot(1, 2, 1)
-        plt.imshow(noise_i, cmap="gray")
-        plt.title(f"Noise sample {i}")
-        plt.colorbar()
-
-        plt.subplot(1, 2, 2)
-        plt.imshow(noisy_i, cmap="gray")
-        plt.title(f"Noisy (bg + noise) {i}")
-        plt.colorbar()
-
-        plt.tight_layout()
-        plt.savefig(os.path.join(out_dir, f"noise_and_noisy_{i}.png"), dpi=200)
-        plt.close()
-
-        # 원하면 raw 스케일로 TIF 저장도 가능
-        noise_raw = noise_i * denom              # noise 자체는 offset 없음
-        noisy_raw = noisy_i * denom + bg_raw     # bg_raw + noise_raw
-
-        # tiff.imwrite(
-        #     os.path.join(out_dir, f"noise_raw_{i}.tif"),
-        #     noise_raw.astype(np.float32),  # noise는 float로 두는 게 나을 수 있음
-        # )
-        # tiff.imwrite(
-        #     os.path.join(out_dir, f"noisy_raw_{i}.tif"),
-        #     np.clip(noisy_raw, 0, 65535).astype(np.uint16),
-        # )
 
 def kl_divergence_pmf(p_bins, p_pmf, q_bins, q_pmf, eps=1e-12):
     """
@@ -559,55 +434,11 @@ def kl_divergence_pmf(p_bins, p_pmf, q_bins, q_pmf, eps=1e-12):
     return kl
 
 
-def extract_noise_samples_from_background(bg_tif_path, roi=None):
-    imgs = tiff.imread(bg_tif_path).astype(np.float32)  # (T,H,W)
-
-    if imgs.ndim != 3:
-        raise ValueError("TIFF must be (T,H,W)")
-
-    if roi is not None:
-        y0, y1, x0, x1 = roi
-        imgs = imgs[:, y0:y1, x0:x1]
-
-    # frame-wise mean subtraction (중요)
-    frame_means = imgs.mean(axis=(1,2), keepdims=True)
-    imgs = imgs - frame_means
-
-    samples_raw = imgs.reshape(-1)  # raw noise (mean≈0)
-
-    # 학습 때와 같은 0~1 정규화 스케일로 맞추기
-    denom = (GLOBAL_VMAX - GLOBAL_VMIN)
-    bg_norm_samples = (samples_raw - GLOBAL_VMIN) / denom
-
-    # NoiseFlow쪽과 공정하게 비교하려고 전체 평균 0으로 맞춤
-    bg_norm_samples = bg_norm_samples - bg_norm_samples.mean()
-
-    return bg_norm_samples
-
-def pmf_with_common_bins(all_samples, samples_p, samples_q, num_bins=200):
-    vmin, vmax = all_samples.min(), all_samples.max()
-    bins = np.linspace(vmin, vmax, 200)
-
-    bins = np.linspace(vmin, vmax, num_bins+1)
-
-    hist_p, _ = np.histogram(samples_p, bins=bins, density=False)
-    hist_q, _ = np.histogram(samples_q, bins=bins, density=False)
-
-    pmf_p = hist_p / hist_p.sum()
-    pmf_q = hist_q / hist_q.sum()
-
-    return bins, pmf_p, pmf_q
-
-
 def compare_poisson_gaussian_noise_model(
+    args,
     n_kl_samples=30,      
     Nf=512,               
     num_bins=200,
-    em_gain=205.92,        # [New] EM Gain 설정 (실험 조건에 맞게 변경: 300, 1000 등)
-    bias_offset=457.80,       # [New] Bias (Offset) 설정. 보통 mean의 최솟값 혹은 캘리브레이션 값
-    sensitivity=4.88,      # [New] Sensitivity (ADU per electron)
-    fitted_cic_lambda=0.0418,
-    sigma_read_basden=19.05
 ):
     
     # (C) [New] Basden Model Parameter - sigma-read-basden
@@ -619,6 +450,7 @@ def compare_poisson_gaussian_noise_model(
     # 하지만 여기선 그냥 작은 값 혹은 G/PG와 비슷한 수준으로 가정해봅니다.
     
     ckpt_path = "experiments/archive/8-10-20-conseq.pth"
+    hybrid_ckpt_path = "experiments/archive/real_hybrid_8ms_best.pth"
     bg_stack_path = "./data_atom/data_atom_8_10_20_conseq/background.tif"
     out_dir = "./noiseflow_viz"
     os.makedirs(out_dir, exist_ok=True)
@@ -637,8 +469,8 @@ def compare_poisson_gaussian_noise_model(
     # Bias 자동 추정 (단순하게 데이터 최솟값 근처로 잡거나 0으로 가정)
     # 정확한 비교를 위해선 실험 세팅의 Bias 값을 넣는 게 좋습니다.
     # 여기선 데이터의 최소값보다 약간 작은 값을 Bias로 가정하거나 0으로 둡니다.
-    if bias_offset == 0.0:
-        bias_offset = np.percentile(bg_samples_raw, 1) # 하위 1%를 bias로 추정 (임시)
+    if args.bias_offset == 0.0:
+        args.bias_offset = np.percentile(bg_samples_raw, 1) # 하위 1%를 bias로 추정 (임시)
 
     # -----------------------------
     # 2) 파라미터 추정 (Gaussian / Poisson-Gaussian / Basden Readout)
@@ -657,14 +489,15 @@ def compare_poisson_gaussian_noise_model(
     # -----------------------------
     # 3) NoiseFlow 로드
     # -----------------------------
-    model, hps = load_trained_model_for_flow(ckpt_path, device="cuda")
-    denom = float(GLOBAL_VMAX - GLOBAL_VMIN)
+    args.basden = False
+    model, hps = load_trained_model_for_flow(args, ckpt_path, device="cuda")
+    denom = float(args.vmax - args.vmin)
 
     # NoiseFlow 샘플링 함수 (기존과 동일)
     @torch.no_grad()
     def sample_nf_frames_from_mean(n_frames):
         frames = []
-        clean_norm = (mean_frame - GLOBAL_VMIN) / denom
+        clean_norm = (mean_frame - args.vmin) / denom
         clean_norm = np.clip(clean_norm, 0.0, 1.0).astype(np.float32)
         clean_t = torch.from_numpy(clean_norm).unsqueeze(0)
         clean_t = _ensure_channels(clean_t, C=hps.x_shape[1])
@@ -672,6 +505,30 @@ def compare_poisson_gaussian_noise_model(
 
         for _ in range(n_frames):
             eps = model.noise_flow.sample(clean=clean_t)
+            eps_raw = eps[:, 0].detach().cpu().numpy()[0] * denom
+            frame_raw = mean_frame + eps_raw
+            frames.append(frame_raw)
+        return np.stack(frames, axis=0)
+    
+    # -----------------------------
+    # 3) Basden NoiseFlow 로드
+    # -----------------------------
+    args.basden = True
+    basden_model, basden_hps = load_trained_model_for_flow(args, hybrid_ckpt_path, device="cuda")
+    denom = float(args.vmax - args.vmin)
+
+    # NoiseFlow 샘플링 함수 (기존과 동일)
+    @torch.no_grad()
+    def sample_basden_nf_frames_from_mean(n_frames):
+        frames = []
+        clean_norm = (mean_frame - args.vmin) / denom
+        clean_norm = np.clip(clean_norm, 0.0, 1.0).astype(np.float32)
+        clean_t = torch.from_numpy(clean_norm).unsqueeze(0)
+        clean_t = _ensure_channels(clean_t, C=basden_hps.x_shape[1])
+        clean_t = clean_t.unsqueeze(0).to(basden_hps.device)
+
+        for _ in range(n_frames):
+            eps = basden_model.noise_flow.sample(clean=clean_t)
             eps_raw = eps[:, 0].detach().cpu().numpy()[0] * denom
             frame_raw = mean_frame + eps_raw
             frames.append(frame_raw)
@@ -697,14 +554,16 @@ def compare_poisson_gaussian_noise_model(
     KL_gauss_list = []
     KL_pg_list    = []
     KL_nf_list    = []
-    KL_basden_list = [] # [New]
+    KL_basden_list = [] 
+    KL_nf_basden_list = [] 
 
     first_gauss_syn = None
     first_pg_syn    = None
     first_nf_syn    = None
-    first_basden_syn = None # [New]
+    first_basden_syn = None
+    first_nf_basden_syn = None
 
-    print(f"Start KL comparison loop (Gain={em_gain}, Bias={bias_offset:.1f})...")
+    print(f"Start KL comparison loop (Gain={args.em_gain}, Bias={args.bias_offset:.1f})...")
 
     for trial in range(n_kl_samples):
         # (a) NoiseFlow
@@ -729,7 +588,7 @@ def compare_poisson_gaussian_noise_model(
         # mean_frame 자리에 (fitted_cic_lambda * em_gain + bias_offset) 값을 가진 가짜 프레임을 넣어주면 됩니다.
         
         # 방법 1: 가짜 mean_frame을 만들어서 넘겨주기 (함수 수정 없이 가능)
-        synthetic_mean_val = bias_offset + (fitted_cic_lambda * em_gain / sensitivity)
+        synthetic_mean_val = args.bias_offset + (args.fitted_cic_lambda * args.em_gain / args.sensitivity)
         synthetic_mean_frame = np.full((H, W), synthetic_mean_val, dtype=np.float32)
         
         # (d) [New] Basden (EMCCD) Model
@@ -737,12 +596,16 @@ def compare_poisson_gaussian_noise_model(
         basden_syn = sample_basden_emccd_frames(
             mean_frame_adu=synthetic_mean_frame, 
             n_frames=Nf, 
-            em_gain=em_gain, 
-            sigma_read=sigma_read_basden,
-            bias_offset=bias_offset,
-            sensitivity=sensitivity
+            em_gain=args.em_gain, 
+            sigma_read=args.sigma_read_basden,
+            bias_offset=args.bias_offset,
+            sensitivity=args.sensitivity
         )
         basden_samples = basden_syn.reshape(-1)
+        
+        # (e) NoiseFlow Basden
+        nf_basden_syn = sample_basden_nf_frames_from_mean(Nf)
+        nf_basden_samples = nf_basden_syn.reshape(-1)
 
         # 저장 (첫 trial)
         if trial == 0:
@@ -750,47 +613,54 @@ def compare_poisson_gaussian_noise_model(
             first_pg_syn    = pg_syn.copy()
             first_nf_syn    = nf_syn.copy()
             first_basden_syn = basden_syn.copy()
+            first_nf_basden_syn = nf_basden_syn.copy()
 
         # PMF & KL
         pmf_g  = pmf_from(gauss_samples)
         pmf_pg = pmf_from(pg_samples)
         pmf_nf = pmf_from(nf_samples)
-        pmf_bd = pmf_from(basden_samples) # [New]
+        pmf_bd = pmf_from(basden_samples)
+        pmf_nf_bd = pmf_from(nf_basden_samples)
 
         kl_g  = kl_divergence_pmf(bins, pmf_bg, bins, pmf_g)
         kl_pg = kl_divergence_pmf(bins, pmf_bg, bins, pmf_pg)
         kl_nf = kl_divergence_pmf(bins, pmf_bg, bins, pmf_nf)
-        kl_bd = kl_divergence_pmf(bins, pmf_bg, bins, pmf_bd) # [New]
+        kl_bd = kl_divergence_pmf(bins, pmf_bg, bins, pmf_bd)
+        kl_nf_bd = kl_divergence_pmf(bins, pmf_bg, bins, pmf_nf_bd)
 
         KL_gauss_list.append(kl_g)
         KL_pg_list.append(kl_pg)
         KL_nf_list.append(kl_nf)
         KL_basden_list.append(kl_bd)
+        KL_nf_basden_list.append(kl_nf_bd)
 
-        print(f"[trial {trial+1}] KL_G={kl_g:.4f}, KL_PG={kl_pg:.4f}, KL_Basden={kl_bd:.4f}, KL_NF={kl_nf:.4f}")
+        print(f"[trial {trial+1}] KL_G={kl_g:.4f}, KL_PG={kl_pg:.4f}, KL_Basden={kl_bd:.4f}, KL_NF={kl_nf:.4f}, KL_NF_Basden={kl_nf_bd:.4f}")
+        
 
     # 결과 정리
     KL_gauss_arr = np.array(KL_gauss_list)
     KL_pg_arr    = np.array(KL_pg_list)
     KL_nf_arr    = np.array(KL_nf_list)
     KL_bd_arr    = np.array(KL_basden_list)
+    KL_nf_bd_arr = np.array(KL_nf_basden_list)
 
     print("\n=== Mean KL Divergences ===")
     print(f"Gaussian        : {KL_gauss_arr.mean():.6f}")
     print(f"Poisson-Gaussian: {KL_pg_arr.mean():.6f}")
     print(f"Basden (EMCCD)  : {KL_bd_arr.mean():.6f}")
     print(f"NoiseFlow       : {KL_nf_arr.mean():.6f}")
+    print(f"NoiseFlow Basden: {KL_nf_bd_arr.mean():.6f}")
 
     # -----------------------------
     # 6) Boxplot 저장 (Basden 포함)
     # -----------------------------
     plt.figure(figsize=(8, 5))
-    data = [KL_gauss_arr, KL_pg_arr, KL_bd_arr, KL_nf_arr]
-    labels = ["Gaussian", "Poisson-Gauss", "Basden(EMCCD)", "NoiseFlow"]
+    data = [KL_gauss_arr, KL_pg_arr, KL_bd_arr, KL_nf_arr, KL_nf_bd_arr]
+    labels = ["Gaussian", "Poisson-Gauss", "Basden(EMCCD)", "NoiseFlow", "NoiseFlow Basden"]
     
     plt.boxplot(data, labels=labels, showmeans=True)
     plt.ylabel("KL Divergence (lower is better)")
-    plt.title(f"Noise Model Comparison (Gain={em_gain})")
+    plt.title(f"Noise Model Comparison (Gain={args.em_gain})")
     plt.grid(True, axis="y", alpha=0.3)
     plt.tight_layout()
     plt.savefig(os.path.join(out_dir, "KL_boxplot_with_basden.png"), dpi=200)
@@ -835,6 +705,11 @@ def compare_poisson_gaussian_noise_model(
                     os.path.join(out_dir, "bg_basden_model_raw.png"),
                     "Basden model synthetic background")
 
+    # (f) NoiseFlow Basden model synthetic (첫 trial)
+    _save_raw_image(first_nf_basden_syn[0],
+                    os.path.join(out_dir, "bg_noiseflow_basden_model_raw.png"),
+                    "NoiseFlow Basden model synthetic background")
+
 
     # -----------------------------
     # 8) PMF 비교 플롯 (첫 trial 기준)
@@ -844,6 +719,7 @@ def compare_poisson_gaussian_noise_model(
     pmf_pg_first    = pmf_from(first_pg_syn.reshape(-1))
     pmf_nf_first    = pmf_from(first_nf_syn.reshape(-1))
     pmf_bd_first    = pmf_from(first_basden_syn.reshape(-1))
+    pmf_nf_bd_first = pmf_from(first_nf_basden_syn.reshape(-1))
 
     centers = 0.5 * (bins[:-1] + bins[1:])
     plt.figure(figsize=(10, 5))
@@ -852,6 +728,7 @@ def compare_poisson_gaussian_noise_model(
     plt.plot(centers, pmf_pg_first,    label="Poisson-Gaussian model (sampled, trial 0)")
     plt.plot(centers, pmf_nf_first,    label="NoiseFlow model (sampled, trial 0)")
     plt.plot(centers, pmf_bd_first,    label="Basden model (sampled, trial 0)")
+    plt.plot(centers, pmf_nf_bd_first, label="NoiseFlow Basden model (sampled, trial 0)")
     plt.xlabel("Raw intensity (DN)")
     plt.ylabel("Probability (pmf)")
     plt.title("Raw-domain PMF comparison (sample-based, first trial)")
@@ -872,17 +749,20 @@ def compare_poisson_gaussian_noise_model(
     img_real = arr[0]                   # Real Background
     img_nf   = first_nf_syn[0]  # NoiseFlow
     img_bd   = first_basden_syn[0]  # Basden (EMCCD)
+    img_nf_bd = first_nf_basden_syn[0]  # NoiseFlow Basden
     
     # 배경 평균 제거 (DC 성분 억제) - 패턴만 보기 위해
     img_real = img_real - img_real.mean()
     img_nf   = img_nf - img_nf.mean()
     img_bd   = img_bd - img_bd.mean()
+    img_nf_bd = img_nf_bd - img_nf_bd.mean()
 
     fig, ax = plt.subplots(figsize=(8, 5))
     
     plot_radial_psd(img_real, "Real Background", "black", ax)
     plot_radial_psd(img_nf,   "NoiseFlow (AI)",  "blue",  ax)
     plot_radial_psd(img_bd,   "Basden Model",    "red",   ax)
+    plot_radial_psd(img_nf_bd, "NoiseFlow Basden Model", "green", ax)
     # plot_radial_psd(img_pg,   "Poisson-Gauss",   "green", ax) # 너무 많으면 생략 가능
 
     ax.set_title("Spatial Structure Analysis (Radial PSD)")
@@ -908,6 +788,7 @@ def compare_poisson_gaussian_noise_model(
 
     # NoiseFlow
     nf_stack = sample_nf_frames_from_mean(N_test)
+    nf_bd_stack = sample_basden_nf_frames_from_mean(N_test)
 
     # Basden (EMCCD)
     # 주의: synthetic_mean_frame은 위에서 정의한 것 사용
@@ -915,10 +796,10 @@ def compare_poisson_gaussian_noise_model(
     bd_stack = sample_basden_emccd_frames(
         mean_frame_adu=syn_mean_frame,
         n_frames=N_test,
-        em_gain=em_gain,
-        sigma_read=sigma_read_basden,
-        bias_offset=bias_offset,
-        sensitivity=sensitivity
+        em_gain=args.em_gain,
+        sigma_read=args.sigma_read_basden,
+        bias_offset=args.bias_offset,
+        sensitivity=args.sensitivity
     )
 
     # 3. Plotting
@@ -927,6 +808,8 @@ def compare_poisson_gaussian_noise_model(
     plot_average_psd(real_stack, "Real Background", "black", ax)
     plot_average_psd(nf_stack,   "NoiseFlow (AI)",  "blue",  ax)
     plot_average_psd(bd_stack,   "Basden Model",    "red",   ax)
+    plot_average_psd(nf_bd_stack, "NoiseFlow Basden Model", "green", ax)
+    
 
     ax.set_title(f"Average Spatial PSD (N={N_test})")
     ax.set_xlabel("Spatial Frequency (Radius)")
@@ -941,4 +824,13 @@ def compare_poisson_gaussian_noise_model(
     
 
 if __name__ == "__main__":
-    compare_poisson_gaussian_noise_model()
+    args = types.SimpleNamespace()
+    args.vmin = 415
+    args.vmax = 655
+    args.em_gain = 205.92        # [New] EM Gain 설정 (실험 조건에 맞게 변경: 300, 1000 등)
+    args.bias_offset = 457.80       # [New] Bias (Offset) 설정
+    args.sensitivity = 4.88      # [New] Sensitivity (ADU per electron)
+    args.fitted_cic_lambda = 0.0418
+    args.sigma_read_basden = 19.05  # [New] Basden 모델의 Readout Noise (ADU 단위)
+    args.basden = False 
+    compare_poisson_gaussian_noise_model(args)

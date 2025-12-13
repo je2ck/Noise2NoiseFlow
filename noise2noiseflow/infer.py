@@ -3,6 +3,7 @@ import glob
 import types
 import torch
 import numpy as np
+import argparse
 
 from tifffile import imwrite
 
@@ -11,16 +12,29 @@ sys.path.append('../')
 
 from model.noise2noise_flow import Noise2NoiseFlow
 from train_atom import init_params, _load_tif, _load_tif_atom, _ensure_channels  # 네가 올린 학습 파일 기준
-from train_atom import GLOBAL_VMIN, GLOBAL_VMAX
 
 # ----------------------
 # 1) 하이퍼파라미터 준비
 # ----------------------
-def build_hps(device='cuda'):
+def build_hps(args, device='cuda'):
     hps = types.SimpleNamespace()
 
     # 학습 때와 동일하게 맞추기
-    hps.arch = "unc|unc|unc|unc|gain|unc|unc|unc|unc"
+    if args.basden:
+        hps.arch = "basden|unc|unc|unc|gain|unc|unc|unc|unc"
+        hps.basden_config = {
+            'vmin': args.vmin,
+            'vmax': args.vmax,
+            'bias_offset': args.basden_bias_offset,
+            'readout_sigma': args.basden_readout_sigma,
+            'em_gain': args.basden_em_gain,
+            'sensitivity': args.basden_sensitivity,
+            'cic_lambda': args.basden_cic_lambda,
+            
+        }
+    else:
+        hps.arch = "unc|unc|unc|unc|gain|unc|unc|unc|unc"
+        hps.basden_config = None
     hps.flow_permutation = 1  # ← arg_parser 기본값이 뭔지 확인해서 필요하면 수정
     hps.lu_decomp = True
     hps.denoiser = 'dncnn'          # 학습 때도 dncnn 썼다면 그대로
@@ -32,13 +46,15 @@ def build_hps(device='cuda'):
     hps.x_shape = (1, C, H, W)   # (B,C,H,W)
 
     hps.device = device if (device == 'cuda' and torch.cuda.is_available()) else 'cpu'
+    hps.vmin = args.vmin
+    hps.vmax = args.vmax
     return hps
 
 # ----------------------
 # 2) 모델 로드 함수
 # ----------------------
-def load_trained_model(ckpt_path: str, device='cuda'):
-    hps = build_hps(device=device)
+def load_trained_model(args, ckpt_path: str, device='cuda'):
+    hps = build_hps(args, device=device)
 
     param_inits = init_params()
     model = Noise2NoiseFlow(
@@ -47,6 +63,7 @@ def load_trained_model(ckpt_path: str, device='cuda'):
         flow_permutation=hps.flow_permutation,
         param_inits=param_inits,
         lu_decomp=hps.lu_decomp,
+        basden_config=hps.basden_config,
         denoiser_model=hps.denoiser,
         dncnn_num_layers=9,
         lmbda=hps.lmbda,
@@ -132,8 +149,8 @@ def denoise_tif(
     noisy_norm    = noisy_np[0]
 
     if to_raw_scale:
-        denoised_raw = denoised_norm * (GLOBAL_VMAX - GLOBAL_VMIN) + GLOBAL_VMIN
-        noisy_raw    = noisy_norm    * (GLOBAL_VMAX - GLOBAL_VMIN) + GLOBAL_VMIN
+        denoised_raw = denoised_norm * (hps.vmax - hps.vmin) + hps.vmin
+        noisy_raw    = noisy_norm    * (hps.vmax - hps.vmin) + hps.vmin
 
         denoised_raw = np.clip(denoised_raw, 0, 65535)
         noisy_raw    = np.clip(noisy_raw, 0, 65535)
@@ -209,7 +226,7 @@ def denoise_and_stack_a_only(
     stack_norm = np.stack(denoised_list, axis=0)  # float32, [0,1]
 
     if to_raw_scale:
-        stack_raw = stack_norm * (GLOBAL_VMAX - GLOBAL_VMIN) + GLOBAL_VMIN
+        stack_raw = stack_norm * (hps.vmax - hps.vmin) + hps.vmin
         stack_raw = np.clip(stack_raw, 0, 65535).astype(np.uint16)
         save_arr = stack_raw
     else:
@@ -253,11 +270,11 @@ def denoise_background_file(
     # --------------------------
     # 1) 학습 때와 동일한 정규화: (x - VMIN) / (VMAX - VMIN)
     # --------------------------
-    denom = float(GLOBAL_VMAX - GLOBAL_VMIN)
+    denom = float(hps.vmax - hps.vmin)
     if denom <= 0:
-        raise ValueError(f"Invalid GLOBAL_VMIN/VMAX: {GLOBAL_VMIN}, {GLOBAL_VMAX}")
+        raise ValueError(f"Invalid VMIN/VMAX: {hps.vmin}, {hps.vmax}")
 
-    arr_norm = (arr - GLOBAL_VMIN) / denom
+    arr_norm = (arr - hps.vmin) / denom
     arr_norm = np.clip(arr_norm, 0.0, 1.0).astype(np.float32)   # (N,H,W), [0,1]
 
     denoised_norm_list = []
@@ -287,7 +304,7 @@ def denoise_background_file(
     # 3) 역정규화 + 저장
     # --------------------------
     if to_raw_scale:
-        stack_raw = stack_norm * denom + GLOBAL_VMIN
+        stack_raw = stack_norm * denom + hps.vmin
         stack_raw = np.clip(stack_raw, 0, 65535).astype(np.uint16)
         save_arr = stack_raw
     else:
@@ -327,14 +344,27 @@ def denoise_background_file(
 #     )
     
 if __name__ == '__main__':
-    ckpt_path = 'experiments/weights/best_model_real.pth'
+    args = argparse.ArgumentParser()
+    args.add_argument('--vmin', type=float, default=415.0, help='Global VMIN for normalization')
+    args.add_argument('--vmax', type=float, default=655.0, help='Global VMAX for normalization')
+    
+    # basden layer config
+    args.add_argument('--basden', action='store_true', help='Use Basden model if specified')
+    args.add_argument('--basden_bias_offset', type=float, default=457.80, help='Bias offset for Basden layer')
+    args.add_argument('--basden_readout_sigma', type=float, default=19.05, help='Readout sigma (ADU) for Basden layer')
+    args.add_argument('--basden_em_gain', type=float, default=205.92, help='EM gain for Basden layer')
+    args.add_argument('--basden_sensitivity', type=float, default=4.88, help='Sensitivity (e-/ADU) for Basden layer')
+    args.add_argument('--basden_cic_lambda', type=float, default=0.0418, help='CIC lambda for Basden layer')
+    args = args.parse_args()
+    
+    ckpt_path = 'experiments/archive/real_hybrid_8ms_best.pth'
 
-    model, hps = load_trained_model(ckpt_path, device='cuda')
+    model, hps = load_trained_model(args, ckpt_path, device='cuda')
 
     # (1) 원래 test scenes 디노이즈
     # denoise_test_folder(model, hps, test_root)
 
     # (2) background 한 파일 디노이즈
-    bg_in  = './data_atom/background.tif'
-    bg_out = './data_atom/background_denoised.tif'
+    bg_in  = './data_atom/data_atom_8_10_20_conseq/background.tif'
+    bg_out = './data_atom/data_atom_8_10_20_conseq/background_denoised_hybrid.tif'
     denoise_background_file(model, hps, bg_in, bg_out, to_raw_scale=True)

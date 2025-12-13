@@ -4,6 +4,42 @@ import numpy as np
 from scipy.special import i1
 from scipy.stats import norm
 
+class BasdenAdaptor(nn.Module):
+    def __init__(self, num_channels, device='cuda'):
+        super().__init__()
+        self.device = device
+        self.name = "BasdenAdaptor"
+        
+        # 1. Scale (Gain/Sigma 보정용)
+        # 초기값 0 -> exp(0)=1.0 (변화 없음에서 시작)
+        self.log_scale = nn.Parameter(torch.zeros(1, num_channels, 1, 1, device=device))
+        
+        # 2. Bias (Offset 보정용)
+        # 초기값 0 (변화 없음에서 시작)
+        self.bias = nn.Parameter(torch.zeros(1, num_channels, 1, 1, device=device))
+    
+    def _forward_and_log_det_jacobian(self, x, **kwargs):
+        # x: Normalized input (0~1)
+        
+        scale = torch.exp(self.log_scale)
+        
+        # 선형 변환: z = scale * x + bias
+        z = x * scale + self.bias
+        
+        # Log-Det Jacobian: log(scale) * H * W
+        # 픽셀마다 scale을 곱해주므로, 전체 부피 변화는 scale의 합입니다.
+        log_det = self.log_scale.sum() * x.shape[2] * x.shape[3]
+        
+        return z, log_det.expand(x.shape[0])
+
+    def _inverse(self, z, **kwargs):
+        scale = torch.exp(self.log_scale)
+        
+        # 역변환: x = (z - bias) / scale
+        x = (z - self.bias) / (scale + 1e-8)
+        return x
+    
+    
 class BasdenFlowLayer(nn.Module):
     def __init__(self, config, device='cuda', num_bins=30000, max_adu=65535):
         super().__init__()

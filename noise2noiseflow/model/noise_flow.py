@@ -7,12 +7,12 @@ from model.flow_layers.affine_coupling import AffineCoupling, ShiftAndLogScale
 from model.flow_layers.signal_dependant import SignalDependant
 from model.flow_layers.gain import Gain
 from model.flow_layers.utils import SdnModelScale
-from model.flow_layers.basden import BasdenFlowLayer
+from model.flow_layers.basden import BasdenFlowLayer, BasdenAdaptor
 # from model.flow_layers.linear_transformation import LinearTransformation
 
 class NoiseFlow(nn.Module):
 
-    def __init__(self, x_shape, arch, flow_permutation, param_inits, basden_config, lu_decomp, device='cuda', *_, **__):
+    def __init__(self, x_shape, arch, flow_permutation, param_inits, basden_config=None, lu_decomp=None, device='cuda', *_, **__):
         super(NoiseFlow, self).__init__()
         self.arch = arch
         self.flow_permutation = flow_permutation
@@ -29,6 +29,11 @@ class NoiseFlow(nn.Module):
             is_last_layer = False
             
             if lyr == 'basden':
+                print('|-BasdenAdaptor')
+                bijectors.append(
+                    BasdenAdaptor(num_channels=x_shape[0], device=self.device)
+                )
+                
                 print('|-BasdenFlowLayer')
                 bijectors.append(
                     BasdenFlowLayer(

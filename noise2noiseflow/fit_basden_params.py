@@ -155,5 +155,5 @@ def analyze_background_noise(tiff_path):
 # ==========================================
 if __name__ == "__main__":
     # 경로를 본인의 데이터 경로로 수정하세요
-    file_path = "./data_atom/data_atom_8_10_20_conseq/background.tif"
+    file_path = "/Users/jaeickbae/Documents/research/denoise/data-prep/data/20251216_4_4_20_array/raw/background_4ms.tif"
     analyze_background_noise(file_path)

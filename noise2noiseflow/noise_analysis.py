@@ -252,7 +252,7 @@ def compute_pmf_from_tiff_stack(
 def build_hps(args, device="cuda"):
     hps = types.SimpleNamespace()
     if args.basden:
-        hps.arch = "basden|unc|unc|unc|unc|gain|unc|unc|unc|unc"
+        hps.arch = "basden|unc|unc|unc|unc|unc|gain|unc|unc|unc|unc|unc"
         hps.basden_config = {
             'vmin': args.vmin,
             'vmax': args.vmax,
@@ -450,7 +450,7 @@ def compare_poisson_gaussian_noise_model(
     # 하지만 여기선 그냥 작은 값 혹은 G/PG와 비슷한 수준으로 가정해봅니다.
     
     ckpt_path = "experiments/archive/8-10-20-conseq.pth"
-    hybrid_ckpt_path = "experiments/archive/real_hybrid_8ms_best.pth"
+    hybrid_ckpt_path = "experiments/archive/real_hybrid_inc_8ms_best.pth"
     bg_stack_path = "./data_atom/data_atom_8_10_20_conseq/background.tif"
     out_dir = "./noiseflow_viz"
     os.makedirs(out_dir, exist_ok=True)

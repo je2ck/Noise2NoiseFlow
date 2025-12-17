@@ -1,8 +1,8 @@
 import tifffile
 import matplotlib.pyplot as plt
 
-img = tifffile.imread("./noise2noiseflow/data_atom/test/scene_16003/a.tif")
-den = tifffile.imread("./noise2noiseflow/data_atom/test/scene_16003/a_denoised.tif")
+img = tifffile.imread("./noise2noiseflow/data_atom/data_atom_5_5_20_conseq/test/scene_16007/a.tif")
+den = tifffile.imread("./noise2noiseflow/data_atom/data_atom_5_5_20_conseq/test/scene_16007/a_denoised.tif")
 
 fig, axes = plt.subplots(1, 2, figsize=(10, 5))
 

@@ -4,7 +4,7 @@
 set -e
 
 # 학습할 시간 리스트
-TIMES=("14ms" "16ms" "20ms")
+TIMES=("12ms" "10ms" "8ms")
 
 # 데이터가 위치한 루트 폴더
 DATA_ROOT="./data_atom" 
@@ -17,32 +17,32 @@ do
     # --------------------------------------------------------------
     # TODO: 아래의 Basden 파라미터 값들을 실제 피팅 결과값으로 수정하세요.
     case "$TIME" in
-        "14ms")
+        "12ms")
             CURRENT_VMIN=473
-            CURRENT_VMAX=754
+            CURRENT_VMAX=731
             # Basden Parameters for 4ms
-            CURRENT_BIAS=499.44
+            CURRENT_BIAS=499.15
             CURRENT_SIGMA=10.00
             CURRENT_GAIN=200.00
-            CURRENT_CIC=0.0379
+            CURRENT_CIC=0.0333
             ;;
-        "16ms")
+        "10ms")
             CURRENT_VMIN=473
-            CURRENT_VMAX=769
+            CURRENT_VMAX=702
             # Basden Parameters for 16ms
-            CURRENT_BIAS=499.13
+            CURRENT_BIAS=499.00
             CURRENT_SIGMA=10.00
             CURRENT_GAIN=200.00
-            CURRENT_CIC=0.0403
+            CURRENT_CIC=0.0313
             ;;
-        "20ms")
+        "8ms")
             CURRENT_VMIN=473
-            CURRENT_VMAX=805
+            CURRENT_VMAX=678
             # Basden Parameters for 20ms
-            CURRENT_BIAS=499.38
+            CURRENT_BIAS=499.17
             CURRENT_SIGMA=10.00
             CURRENT_GAIN=200.00
-            CURRENT_CIC=0.0453
+            CURRENT_CIC=0.0287
             ;;
         *)
             echo "Error: 정의되지 않은 시간 포맷입니다 -> $TIME"

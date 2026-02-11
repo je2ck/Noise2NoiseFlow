@@ -9,20 +9,22 @@ import os
 # 1. 물리 상수 설정 (Experimental Constants)
 # ==========================================
 # 앞선 분석에서 Pre-amp Gain x1.0 모드임이 밝혀졌습니다.
-SENSITIVITY = 4.88  # e-/ADU (Sensitivity)
+SENSITIVITY = 4.15  # e-/ADU (Sensitivity)
+EM_GAIN = 300.0     # EM Gain (Fixed)
 
 
-def basden_complete_model(x_adu, bias, sigma_adu, gain, lam, scale):
+def basden_complete_model(x_adu, bias, sigma_adu, lam, scale):
     """
     Physically Correct Basden + Gaussian Model (Corrected)
+    Gain and Sensitivity are fixed as global constants.
     """
+    gain = EM_GAIN  # 고정값 사용
     
     # --- A. Gaussian Part (Readout Noise for 0 photons) ---
     # 0개 광자가 들어올 확률 = e^(-lambda)
     # 따라서 가우시안의 높이는 (1/sqrt(2pi*sigma)) * e^(-lambda) 가 되어야 함
     norm_gauss = 1.0 / (np.sqrt(2 * np.pi) * sigma_adu)
     
-    # [수정 1] 가중치를 (1-lam) 근사식 대신 정확한 exp(-lam) 사용
     prob_zero = np.exp(-lam) 
     gauss_pdf = prob_zero * norm_gauss * np.exp(-0.5 * ((x_adu - bias) / sigma_adu)**2)
     
@@ -36,10 +38,6 @@ def basden_complete_model(x_adu, bias, sigma_adu, gain, lam, scale):
     if np.any(mask):
         z = x_e[mask]
         
-        # [수정 2] Basden Formula 수식 교정
-        # 이전: denom에 lam이 들어감 (오류) -> denom = np.sqrt(gain * z * lam)
-        # 수정: 분자에 sqrt(lam)을 곱하고, 분모에서는 뺌
-        
         # P(x) = [sqrt(lam) / sqrt(gx)] * exp(...) * I1(...)
         
         term_coef = np.sqrt(lam) / (np.sqrt(gain * z) + 1e-12)
@@ -52,7 +50,7 @@ def basden_complete_model(x_adu, bias, sigma_adu, gain, lam, scale):
         basden_pdf_e[mask] = val * SENSITIVITY 
 
     # --- C. Combine ---
-    # [수정 3] Basden 식 자체에 이미 e^(-lam) 등 확률 정보가 포함되어 있음.
+    # Basden 식 자체에 이미 e^(-lam) 등 확률 정보가 포함되어 있음.
     # 따라서 여기서 'lam'을 곱하면 안 됩니다. (더하기만 해야 함)
     
     total_pdf = gauss_pdf + basden_pdf_e
@@ -75,16 +73,16 @@ def analyze_background_noise(tiff_path):
     # 2. 초기값 추정 (Initial Guess)
     bias_init = bin_centers[np.argmax(hist_y)]  # 최빈값
     sigma_init = 25.0   # 이전 분석 결과 반영
-    gain_init = 285.0   # 이전 분석 결과 반영
     lam_init = 0.05     # 정상적인 CIC 예상값
     scale_init = 1.0    # Density=True이므로 1에 가까움 (하지만 자유도로 둠)
     
-    print(f"Initial Guess: Bias={bias_init:.1f}, Sig={sigma_init}, Gain={gain_init}")
+    print(f"Initial Guess: Bias={bias_init:.1f}, Sig={sigma_init}")
+    print(f"Fixed Constants: Gain={EM_GAIN}, Sensitivity={SENSITIVITY}")
 
-    # 3. Fitting (Log Space)
-    def log_objective(x, b, s, g, l, sc):
+    # 3. Fitting (Log Space) — Gain과 Sensitivity는 고정
+    def log_objective(x, b, s, l, sc):
         # Log fitting을 위해 모델값에 log를 취함
-        model_val = basden_complete_model(x, b, s, g, l, sc)
+        model_val = basden_complete_model(x, b, s, l, sc)
         return np.log(np.maximum(model_val, 1e-20)) # log(0) 방지
     
     try:
@@ -96,25 +94,25 @@ def analyze_background_noise(tiff_path):
         # Bounds 설정 (물리적 의미에 맞게)
         popt, pcov = curve_fit(
             log_objective, x_fit, y_fit,
-            p0=[bias_init, sigma_init, gain_init, lam_init, scale_init],
+            p0=[bias_init, sigma_init, lam_init, scale_init],
             bounds=(
-                # Lower: Bias, Sig, Gain, Lam, Scale
-                [bias_init-50, 10.0, 200.0, 1e-5, 0],   
-                # Upper: Bias, Sig, Gain, Lam, Scale
-                [bias_init+50, 100.0, 500.0, 1.0, np.inf]
+                # Lower: Bias, Sig, Lam, Scale
+                [bias_init-50, 10.0, 1e-5, 0],   
+                # Upper: Bias, Sig, Lam, Scale
+                [bias_init+50, 100.0, 1.0, np.inf]
             )
         )
         
-        bias_f, sigma_f, gain_f, lam_f, scale_f = popt
+        bias_f, sigma_f, lam_f, scale_f = popt
         
         # 4. 결과 출력
         print("\n" + "="*40)
         print("   PHYSCIAL FITTING RESULTS (Final)   ")
         print("="*40)
         print(f"Sensitivity : {SENSITIVITY} e-/ADU (Fixed)")
+        print(f"EM Gain     : {EM_GAIN} (Fixed)")
         print(f"Bias Offset : {bias_f:.2f} ADU")
         print(f"Readout Sig : {sigma_f:.2f} ADU (-> {sigma_f*SENSITIVITY:.1f} e-)")
-        print(f"EM Gain     : {gain_f:.2f}")
         print(f"CIC Lambda  : {lam_f:.4f} e-/pixel/frame")
         print("="*40)
         
@@ -128,11 +126,11 @@ def analyze_background_noise(tiff_path):
         y_model = basden_complete_model(bin_centers, *popt)
         plt.semilogy(bin_centers, y_model, 'r-', linewidth=2, label=f'Best Fit (CIC={lam_f:.4f})')
         
-        # Components (분리해서 보여주기)
-        y_gauss = scale_f * (1-lam_f) * (1.0/(np.sqrt(2*np.pi)*sigma_f)) * np.exp(-0.5*((bin_centers-bias_f)/sigma_f)**2)
+        # Components (분리해서 보여주기) — exp(-lam) 사용 (모델과 일치)
+        y_gauss = scale_f * np.exp(-lam_f) * (1.0/(np.sqrt(2*np.pi)*sigma_f)) * np.exp(-0.5*((bin_centers-bias_f)/sigma_f)**2)
         plt.semilogy(bin_centers, y_gauss, 'b--', linewidth=1, alpha=0.7, label='Readout Noise (Gauss)')
         
-        plt.title(f"EMCCD Noise Analysis\nGain={gain_f:.1f}, $\sigma_{{read}}$={sigma_f:.1f}, $\lambda_{{CIC}}$={lam_f:.4f}")
+        plt.title(f"EMCCD Noise Analysis\nGain={EM_GAIN:.0f} (fixed), $\sigma_{{read}}$={sigma_f:.1f}, $\lambda_{{CIC}}$={lam_f:.4f}")
         plt.xlabel("Pixel Value (ADU)")
         plt.ylabel("Probability Density (Log scale)")
         plt.legend()
@@ -144,7 +142,7 @@ def analyze_background_noise(tiff_path):
         print(f"Plot saved to: {save_path}")
         plt.show()
         
-        return bias_f, sigma_f, gain_f, lam_f
+        return bias_f, sigma_f, lam_f
 
     except Exception as e:
         print(f"Fitting Failed: {e}")
@@ -154,6 +152,8 @@ def analyze_background_noise(tiff_path):
 # 실행 부
 # ==========================================
 if __name__ == "__main__":
-    # 경로를 본인의 데이터 경로로 수정하세요
-    file_path = "/Users/jaeickbae/Documents/research/denoise/data-prep/data/20251216_4_4_20_array/raw/background_4ms.tif"
-    analyze_background_noise(file_path)
+    import argparse
+    parser = argparse.ArgumentParser(description="Fit Basden EMCCD noise model to background TIFF data")
+    parser.add_argument("tiff", type=str, help="Path to background TIFF file")
+    args = parser.parse_args()
+    analyze_background_noise(args.tiff)

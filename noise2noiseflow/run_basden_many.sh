@@ -4,7 +4,7 @@
 set -e
 
 # 학습할 시간 리스트
-TIMES=("12ms" "10ms" "8ms")
+TIMES=("20ms" "16ms" "14ms" "12ms" "10ms" "8ms")
 
 # 데이터가 위치한 루트 폴더
 DATA_ROOT="./data_atom" 
@@ -17,32 +17,59 @@ do
     # --------------------------------------------------------------
     # TODO: 아래의 Basden 파라미터 값들을 실제 피팅 결과값으로 수정하세요.
     case "$TIME" in
+        "20ms")
+            CURRENT_VMIN=473
+            CURRENT_VMAX=805
+            # Basden Parameters for 20ms
+            CURRENT_BIAS=499.82
+            CURRENT_SIGMA=10.00
+            CURRENT_GAIN=300.00
+            CURRENT_CIC=0.0306
+            ;;
+        "16ms")
+            CURRENT_VMIN=473
+            CURRENT_VMAX=769
+            # Basden Parameters for 16ms
+            CURRENT_BIAS=499.52
+            CURRENT_SIGMA=10.00
+            CURRENT_GAIN=300.00
+            CURRENT_CIC=0.0280
+            ;;
+        "14ms")
+            CURRENT_VMIN=473
+            CURRENT_VMAX=754
+            # Basden Parameters for 14ms
+            CURRENT_BIAS=499.83
+            CURRENT_SIGMA=10.00
+            CURRENT_GAIN=300.00
+            CURRENT_CIC=0.0266
+            ;;
         "12ms")
             CURRENT_VMIN=473
             CURRENT_VMAX=731
-            # Basden Parameters for 4ms
-            CURRENT_BIAS=499.15
+            # Basden Parameters for 12ms
+            CURRENT_BIAS=499.48
             CURRENT_SIGMA=10.00
-            CURRENT_GAIN=200.00
-            CURRENT_CIC=0.0333
+            CURRENT_GAIN=300.00
+            CURRENT_CIC=0.0245
             ;;
         "10ms")
             CURRENT_VMIN=473
             CURRENT_VMAX=702
-            # Basden Parameters for 16ms
-            CURRENT_BIAS=499.00
+            # Basden Parameters for 10ms
+            CURRENT_BIAS=499.31
             CURRENT_SIGMA=10.00
-            CURRENT_GAIN=200.00
-            CURRENT_CIC=0.0313
+            CURRENT_GAIN=300.00
+            CURRENT_CIC=0.0230
             ;;
         "8ms")
             CURRENT_VMIN=473
             CURRENT_VMAX=678
-            # Basden Parameters for 20ms
-            CURRENT_BIAS=499.17
+            # Basden Parameters for 8ms
+            CURRENT_BIAS=499.48
             CURRENT_SIGMA=10.00
-            CURRENT_GAIN=200.00
-            CURRENT_CIC=0.0287
+            CURRENT_GAIN=300.00
+            CURRENT_CIC=0.0213
             ;;
         *)
             echo "Error: 정의되지 않은 시간 포맷입니다 -> $TIME"

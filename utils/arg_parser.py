@@ -76,11 +76,11 @@ def arg_parser():
     parser.add_argument('--vmax', type=float, default=548.0, help='Global VMAX for normalization')
     
     # basden layer config
-    parser.add_argument('--basden_bias_offset', type=float, default=457.80, help='Bias offset for Basden layer')
-    parser.add_argument('--basden_readout_sigma', type=float, default=19.05, help='Readout sigma (ADU) for Basden layer')
-    parser.add_argument('--basden_em_gain', type=float, default=205.92, help='EM gain for Basden layer')
-    parser.add_argument('--basden_sensitivity', type=float, default=4.88, help='Sensitivity (e-/ADU) for Basden layer')
-    parser.add_argument('--basden_cic_lambda', type=float, default=0.0418, help='CIC lambda for Basden layer')
+    parser.add_argument('--basden_bias_offset', type=float, default=499.82, help='Bias offset for Basden layer')
+    parser.add_argument('--basden_readout_sigma', type=float, default=10.00, help='Readout sigma (ADU) for Basden layer')
+    parser.add_argument('--basden_em_gain', type=float, default=300.00, help='EM gain for Basden layer')
+    parser.add_argument('--basden_sensitivity', type=float, default=4.15, help='Sensitivity (e-/ADU) for Basden layer')
+    parser.add_argument('--basden_cic_lambda', type=float, default=0.0306, help='CIC lambda for Basden layer')
     
     hps = parser.parse_args()  # So error if typo
     return hps

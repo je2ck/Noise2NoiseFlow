@@ -143,7 +143,6 @@ do
         --logdir "$LOG_DIR_WARMUP" \
         "${COMMON_ARGS[@]}"
 
-    # Path to the last epoch checkpoint saved by stage 1
     STAGE1_CKPT="${LOG_ROOT}/${LOG_DIR_WARMUP}/saved_models/epoch_${WARMUP_EPOCHS}_nf_model_net.pth"
     if [ ! -f "$STAGE1_CKPT" ]; then
         echo "Error: warm-up checkpoint not found: $STAGE1_CKPT"

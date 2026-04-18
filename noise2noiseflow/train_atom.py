@@ -864,7 +864,11 @@ def run_training(hps) -> None:
     train_logger, validation_logger, test_logger, sample_logger, writer = create_loggers_and_writer(hps, start_epoch)
 
     test_nll_best = np.inf
-    for epoch in range(start_epoch, hps.epochs):
+    last_epoch = start_epoch - 1
+    # NOTE: upper bound is inclusive so `--epochs N` runs N epochs
+    # (previously ran N-1 due to off-by-one)
+    for epoch in range(start_epoch, hps.epochs + 1):
+        last_epoch = epoch
         do_validation = is_validation_epoch(epoch, hps)
         is_best = 0
         logging.info("Epoch %d started | validation=%s", epoch, do_validation)
@@ -970,6 +974,18 @@ def run_training(hps) -> None:
                 epoch,
                 tr['loss_mean'],
             )
+
+    # Always save a checkpoint at the final epoch, even if it doesn't fall
+    # on the periodic schedule (avoids warm-start / resume edge cases where
+    # the very last epoch was dropped).
+    if last_epoch >= start_epoch:
+        final_path = os.path.join(
+            hps.model_save_dir,
+            f'epoch_{last_epoch}_nf_model_net.pth',
+        )
+        if not os.path.isfile(final_path):
+            save_checkpoint(model, optimizer, last_epoch, final_path)
+            logging.info("Final-epoch checkpoint saved to %s", final_path)
 
     writer.close()
     

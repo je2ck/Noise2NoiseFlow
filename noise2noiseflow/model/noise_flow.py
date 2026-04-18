@@ -106,17 +106,22 @@ class NoiseFlow(nn.Module):
                 bijectors.append(Gain(name='gain_%d' % i, device=self.device))
 
             elif lyr == 'cond':
-                # Use ShiftAndLogScale with a FIXED, non-trainable scale cap
-                # (tanh * 0.5) so log_scale ∈ (-0.5, 0.5). This prevents cond
-                # from collapsing z by learning very large |log_scale|, a
-                # training pathology observed with the default learnable cap.
+                # ShiftAndLogScale with FIXED, non-trainable scale cap.
+                # Bound MUST be wide enough to allow meaningful per-clean
+                # log_scale variation (Panel 7 shows var(z|c) up to 8, so
+                # cond needs log_scale ≈ -log(sqrt(8)) = -1.04). A tight
+                # cap (e.g., 0.5) causes cond to saturate and give up
+                # per-c learning (training pathology observed with 0.5).
+                # 1.5 allows log_scale ∈ (-1.5, +1.5), i.e. scale ∈ (0.22, 4.48)
+                # — enough to correct Panel 7 while still preventing full
+                # mode collapse observed with unbounded cap.
                 bounded_sls = partial(
                     ShiftAndLogScale,
-                    scale_init=0.5,
+                    scale_init=1.5,
                     scale_trainable=False,
                 )
                 print('|-ConditionalAffine(only_clean=True, C={}, '
-                      'scale∈(-0.5,0.5))'.format(cur[0]))
+                      'scale∈(-1.5,1.5))'.format(cur[0]))
                 bijectors.append(
                     ConditionalAffine(
                         x_shape=tuple(cur),

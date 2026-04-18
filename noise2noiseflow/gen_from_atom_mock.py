@@ -36,8 +36,9 @@ from tifffile import imread, imwrite
 
 
 # ------------------------------------------------------------
-# Per-exposure data directories (matches infer_tif.sh / run_basden_many.sh)
+# 두 가지 데이터 레이아웃 지원
 # ------------------------------------------------------------
+# (1) per-exposure subdirs (원본 머신: data-prep)
 BASE_DIRS = {
     '4ms':  '../../data-prep/data/4ms_array_bs',
     '5ms':  '../../data-prep/data/5ms_array_bs',
@@ -49,17 +50,46 @@ BASE_DIRS = {
     '20ms': '../../data-prep/data/20260105_20_20_60_array_bs',
 }
 
+# (2) flat layout (다른 머신: 모든 <ms>_data_rot90_filtered.tif 가 한 디렉토리에)
+#     --flat_dir PATH 로 이 모드를 활성화
+
 OUT_ROOT = './data_atom'   # matches run_basden_many.sh DATA_ROOT
 
 
+def resolve_paths(ms, flat_dir=None):
+    """
+    Returns (source_tif, test_tif_or_None).
+    flat_dir 가 주어지면 그 디렉토리에서 <ms>_data_rot90_filtered.tif 와 <ms>_test.tif 를 찾고,
+    아니면 BASE_DIRS[ms] 의 raw/ 하위 구조를 사용.
+    """
+    if flat_dir is not None:
+        src = os.path.join(flat_dir, f'{ms}_data_rot90_filtered.tif')
+        # test.tif 후보들 — 있는 것 하나 선택 (없으면 None)
+        test_candidates = [
+            os.path.join(flat_dir, f'{ms}_test.tif'),
+            os.path.join(flat_dir, f'test_{ms}.tif'),
+            os.path.join(flat_dir, f'{ms}', 'test.tif'),
+        ]
+        test = next((p for p in test_candidates if os.path.exists(p)), None)
+        return src, test
+    else:
+        if ms not in BASE_DIRS:
+            return None, None
+        base = BASE_DIRS[ms]
+        src = os.path.join(base, 'raw', f'{ms}_data_rot90_filtered.tif')
+        test = os.path.join(base, 'test.tif')
+        if not os.path.exists(test):
+            test = None
+        return src, test
+
+
 # ------------------------------------------------------------
-def build_one(ms, base_dir, out_root, dry_run=False, verify=True,
+def build_one(ms, out_root, flat_dir=None, dry_run=False, verify=True,
               val_policy='half_test', val_value=None):
     print(f"\n========== {ms} ==========")
-    src = os.path.join(base_dir, 'raw', f'{ms}_data_rot90_filtered.tif')
-    test_path = os.path.join(base_dir, 'test.tif')
+    src, test_path = resolve_paths(ms, flat_dir=flat_dir)
 
-    if not os.path.exists(src):
+    if src is None or not os.path.exists(src):
         print(f"  [skip] source not found: {src}")
         return
 
@@ -78,14 +108,14 @@ def build_one(ms, base_dir, out_root, dry_run=False, verify=True,
     print(f"    total pairs = {N_total}  ({H}x{W})")
 
     # Infer split from existing test.tif length
-    if not os.path.exists(test_path):
+    if test_path is None or not os.path.exists(test_path):
         # Fall back to fixed 40/20/40
         N_test = int(N_total * 0.4)
         print(f"  [note] test.tif not found → default split 40/20/40 (N_test = {N_test})")
     else:
         n_test_frames = imread(test_path).shape[0]
         N_test = n_test_frames
-        print(f"  test.tif frames = {N_test}")
+        print(f"  test.tif ({test_path}) frames = {N_test}")
 
     # Val sizing policy
     if val_policy == 'half_test':
@@ -105,7 +135,7 @@ def build_one(ms, base_dir, out_root, dry_run=False, verify=True,
           f"({N_train/N_total*100:.1f}/{N_val/N_total*100:.1f}/{N_test/N_total*100:.1f})")
 
     # Verification: test.tif[0] should equal firsts[N_train + N_val]
-    if verify and os.path.exists(test_path):
+    if verify and test_path is not None and os.path.exists(test_path):
         t = imread(test_path)
         test_start = N_train + N_val
         if test_start < N_total:
@@ -155,6 +185,10 @@ def main():
                    help='특정 노광만 (예: --times 5ms 8ms). 기본: 전체 8개')
     p.add_argument('--out_root', type=str, default=OUT_ROOT,
                    help=f'저장 루트. 기본: {OUT_ROOT}')
+    p.add_argument('--flat_dir', type=str, default=None,
+                   help='모든 <ms>_data_rot90_filtered.tif 가 한 디렉토리에 있는 '
+                        'flat layout 일 때 그 디렉토리 경로 (예: --flat_dir ./data). '
+                        '기본: BASE_DIRS 의 per-exposure subdir 사용.')
     p.add_argument('--dry_run', action='store_true',
                    help='파일 안 쓰고 split 계획만 출력')
     p.add_argument('--no_verify', action='store_true',
@@ -174,13 +208,11 @@ def main():
     times = args.times if args.times else list(BASE_DIRS.keys())
     print(f"Exposure times: {times}")
     print(f"Output root   : {args.out_root}")
+    print(f"Flat dir      : {args.flat_dir or '(per-exposure BASE_DIRS)'}")
     print(f"Dry run       : {args.dry_run}")
 
     for ms in times:
-        if ms not in BASE_DIRS:
-            print(f"[skip] {ms} not in BASE_DIRS")
-            continue
-        build_one(ms, BASE_DIRS[ms], args.out_root,
+        build_one(ms, args.out_root, flat_dir=args.flat_dir,
                   dry_run=args.dry_run, verify=not args.no_verify,
                   val_policy=args.val_policy, val_value=args.val_value)
 

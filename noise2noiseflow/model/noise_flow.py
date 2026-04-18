@@ -3,7 +3,7 @@ from torch import nn
 import numpy as np
 
 from model.flow_layers.conv2d1x1 import Conv2d1x1
-from model.flow_layers.affine_coupling import AffineCoupling, ShiftAndLogScale
+from model.flow_layers.affine_coupling import AffineCoupling, ShiftAndLogScale, ConditionalAffine
 from model.flow_layers.signal_dependant import SignalDependant
 from model.flow_layers.gain import Gain
 from model.flow_layers.utils import SdnModelScale
@@ -27,12 +27,17 @@ class NoiseFlow(nn.Module):
         """
         Tokens:
           basden  - physical EMCCD model (BasdenAdaptor + BasdenFlowLayer)
+          cond    - ConditionalAffine(only_clean=True): per-pixel shift/log_scale
+                    predicted from the denoised (clean) image.
+                    Targets signal-dependent residual that Basden cannot capture
+                    (panel 7 of residual_diag).
           sq      - Squeeze (space-to-depth, factor 2): [C,H,W] -> [4C, H/2, W/2]
           usq     - Unsqueeze (depth-to-space, factor 2): inverse of sq
           unc     - Conv2d1x1 permutation + AffineCoupling
           sdn     - SignalDependant (needs clean/iso/cam)
           gain    - scalar gain
-        Example:  basden|sq|unc|unc|unc|usq
+        Example:  basden|cond              (current recommendation)
+                  basden|sq|unc|unc|unc|usq (if spatial structure remains)
         """
         arch_lyrs = self.arch.split('|')
         bijectors = []
@@ -98,6 +103,19 @@ class NoiseFlow(nn.Module):
             elif lyr == 'gain':
                 print('|-Gain')
                 bijectors.append(Gain(name='gain_%d' % i, device=self.device))
+
+            elif lyr == 'cond':
+                print('|-ConditionalAffine(only_clean=True, C={})'.format(cur[0]))
+                bijectors.append(
+                    ConditionalAffine(
+                        x_shape=tuple(cur),
+                        shift_and_log_scale=ShiftAndLogScale,
+                        encoder=None,            # only_clean=True 에선 사용 안 함
+                        name='cond_%d' % i,
+                        device=self.device,
+                        only_clean=True,
+                    )
+                )
 
             else:
                 raise ValueError("Unknown arch token: {!r}".format(lyr))

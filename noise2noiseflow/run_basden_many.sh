@@ -111,7 +111,7 @@ do
     # 2. Python 실행 (Basden 파라미터 인자 추가)
     # --------------------------------------------------------------
     python train_atom.py \
-        --arch "basden" \
+        --arch "basden|cond" \
         --sidd_path "$CURRENT_DATA_PATH" \
         --epochs 200 \
         --n_batch_train 8 \

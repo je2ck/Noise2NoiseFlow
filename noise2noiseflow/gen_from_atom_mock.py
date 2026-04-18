@@ -85,7 +85,7 @@ def resolve_paths(ms, flat_dir=None):
 
 # ------------------------------------------------------------
 def build_one(ms, out_root, flat_dir=None, dry_run=False, verify=True,
-              val_policy='half_test', val_value=None):
+              val_policy='half_test', val_value=None, force_ratios=None):
     print(f"\n========== {ms} ==========")
     src, test_path = resolve_paths(ms, flat_dir=flat_dir)
 
@@ -107,30 +107,38 @@ def build_one(ms, out_root, flat_dir=None, dry_run=False, verify=True,
     H, W = firsts.shape[1:]
     print(f"    total pairs = {N_total}  ({H}x{W})")
 
-    # Infer split from existing test.tif length
-    if test_path is None or not os.path.exists(test_path):
-        # Fall back to fixed 40/20/40
-        N_test = int(N_total * 0.4)
-        print(f"  [note] test.tif not found → default split 40/20/40 (N_test = {N_test})")
+    # Split 결정
+    if force_ratios is not None:
+        # train/val/test 비율로 직접 지정 (test.tif 길이 무시)
+        rt, rv, rte = force_ratios
+        assert abs(rt + rv + rte - 1.0) < 1e-6, f"ratios must sum to 1, got {rt+rv+rte}"
+        N_train = int(round(N_total * rt))
+        N_val = int(round(N_total * rv))
+        N_test = N_total - N_train - N_val
+        print(f"  [force_ratios] {rt:.2f}/{rv:.2f}/{rte:.2f}")
     else:
-        n_test_frames = imread(test_path).shape[0]
-        N_test = n_test_frames
-        print(f"  test.tif ({test_path}) frames = {N_test}")
+        # test.tif 길이 기반 추론
+        if test_path is None or not os.path.exists(test_path):
+            N_test = int(N_total * 0.4)
+            print(f"  [note] test.tif not found → default split 40/20/40 (N_test = {N_test})")
+        else:
+            N_test = imread(test_path).shape[0]
+            print(f"  test.tif ({test_path}) frames = {N_test}")
 
-    # Val sizing policy
-    if val_policy == 'half_test':
-        N_val = N_test // 2                         # 8~20ms observed pattern
-    elif val_policy == 'fraction':
-        N_val = int(round((N_total - N_test) * val_value))
-    elif val_policy == 'explicit':
-        N_val = int(val_value)
-    elif val_policy == 'zero':
-        N_val = 0
-    else:
-        raise ValueError(f"Unknown val_policy: {val_policy}")
-    N_train = N_total - N_val - N_test
-    if N_train <= 0:
-        raise ValueError(f"N_train={N_train} <= 0; bad split. N_total={N_total}, N_test={N_test}, N_val={N_val}")
+        if val_policy == 'half_test':
+            N_val = N_test // 2                         # 8~20ms observed pattern
+        elif val_policy == 'fraction':
+            N_val = int(round((N_total - N_test) * val_value))
+        elif val_policy == 'explicit':
+            N_val = int(val_value)
+        elif val_policy == 'zero':
+            N_val = 0
+        else:
+            raise ValueError(f"Unknown val_policy: {val_policy}")
+        N_train = N_total - N_val - N_test
+
+    if N_train <= 0 or N_val < 0 or N_test <= 0:
+        raise ValueError(f"Bad split: train={N_train} val={N_val} test={N_test}")
     print(f"    split  train={N_train}  val={N_val}  test={N_test}  "
           f"({N_train/N_total*100:.1f}/{N_val/N_total*100:.1f}/{N_test/N_total*100:.1f})")
 
@@ -200,7 +208,16 @@ def main():
                         'explicit(절대 개수) / zero(val 없음)')
     p.add_argument('--val_value', type=float, default=None,
                    help='val_policy 가 fraction 이면 0~1 사이 비율, explicit 이면 개수')
+    p.add_argument('--force_ratios', nargs=3, type=float, default=None,
+                   metavar=('TRAIN', 'VAL', 'TEST'),
+                   help='train/val/test 비율 직접 지정 (test.tif 길이 무시). '
+                        '예: --force_ratios 0.4 0.2 0.4')
     args = p.parse_args()
+
+    if args.force_ratios is not None:
+        s = sum(args.force_ratios)
+        if abs(s - 1.0) > 1e-6:
+            p.error(f'--force_ratios 합계가 1 이 아닙니다: {args.force_ratios} (sum={s})')
 
     if args.val_policy in ('fraction', 'explicit') and args.val_value is None:
         p.error(f'--val_policy {args.val_policy} 쓸 때는 --val_value 필요')
@@ -214,7 +231,8 @@ def main():
     for ms in times:
         build_one(ms, args.out_root, flat_dir=args.flat_dir,
                   dry_run=args.dry_run, verify=not args.no_verify,
-                  val_policy=args.val_policy, val_value=args.val_value)
+                  val_policy=args.val_policy, val_value=args.val_value,
+                  force_ratios=args.force_ratios)
 
     print("\n==========================================")
     print("All done. Run training with:")

@@ -16,73 +16,72 @@ do
     # --------------------------------------------------------------
     # 1. 시간별 파라미터 매핑 (VMIN, VMAX 및 Basden 파라미터)
     # --------------------------------------------------------------
-    # TODO: 아래의 Basden 파라미터 값들을 실제 피팅 결과값으로 수정하세요.
-    # Basden params: fit_results/ 재피팅 반영 (2026-04-18)
+    # Basden params: log-space dark fit (σ, bias) + atom-image λ refit (stray light 흡수)
     # sensitivity=4.15, em_gain=300 고정
     case "$TIME" in
         "20ms")
             CURRENT_VMIN=473
             CURRENT_VMAX=805
-            CURRENT_BIAS=499.09
-            CURRENT_SIGMA=8.602
+            CURRENT_BIAS=500.364
+            CURRENT_SIGMA=9.085
             CURRENT_GAIN=300.00
-            CURRENT_CIC=0.01977
+            CURRENT_CIC=0.01583
             ;;
         "16ms")
             CURRENT_VMIN=473
             CURRENT_VMAX=769
-            CURRENT_BIAS=499.06
-            CURRENT_SIGMA=8.578
+            CURRENT_BIAS=500.174
+            CURRENT_SIGMA=9.070
             CURRENT_GAIN=300.00
-            CURRENT_CIC=0.01767
+            CURRENT_CIC=0.01451
             ;;
         "14ms")
             CURRENT_VMIN=473
             CURRENT_VMAX=754
-            CURRENT_BIAS=499.36
-            CURRENT_SIGMA=8.553
+            CURRENT_BIAS=500.539
+            CURRENT_SIGMA=9.041
             CURRENT_GAIN=300.00
-            CURRENT_CIC=0.01635
+            CURRENT_CIC=0.01408
             ;;
         "12ms")
             CURRENT_VMIN=473
             CURRENT_VMAX=731
-            CURRENT_BIAS=499.19
-            CURRENT_SIGMA=8.542
+            CURRENT_BIAS=500.221
+            CURRENT_SIGMA=9.010
             CURRENT_GAIN=300.00
-            CURRENT_CIC=0.01427
+            CURRENT_CIC=0.01340
             ;;
         "10ms")
             CURRENT_VMIN=473
             CURRENT_VMAX=702
-            CURRENT_BIAS=499.19
-            CURRENT_SIGMA=8.528
+            CURRENT_BIAS=500.079
+            CURRENT_SIGMA=8.949
             CURRENT_GAIN=300.00
-            CURRENT_CIC=0.01351
+            CURRENT_CIC=0.01192
             ;;
         "8ms")
             CURRENT_VMIN=473
             CURRENT_VMAX=678
-            CURRENT_BIAS=499.27
-            CURRENT_SIGMA=8.542
+            CURRENT_BIAS=500.223
+            CURRENT_SIGMA=8.936
             CURRENT_GAIN=300.00
-            CURRENT_CIC=0.01240
+            CURRENT_CIC=0.01119
             ;;
         "5ms")
             CURRENT_VMIN=473
             CURRENT_VMAX=647
-            CURRENT_BIAS=499.17
-            CURRENT_SIGMA=8.503
+            CURRENT_BIAS=500.182
+            CURRENT_SIGMA=9.019
             CURRENT_GAIN=300.00
-            CURRENT_CIC=0.01057
+            CURRENT_CIC=0.01003
             ;;
         "4ms")
             CURRENT_VMIN=473
             CURRENT_VMAX=654
-            CURRENT_BIAS=499.23
-            CURRENT_SIGMA=8.522
+            CURRENT_BIAS=500.295
+            CURRENT_SIGMA=9.015
             CURRENT_GAIN=300.00
-            CURRENT_CIC=0.01165
+            CURRENT_CIC=0.01094
             ;;
         *)
             echo "Error: 정의되지 않은 시간 포맷입니다 -> $TIME"

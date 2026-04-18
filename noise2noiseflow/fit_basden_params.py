@@ -92,12 +92,14 @@ def analyze_background_noise(tiff_path, bins=400, fit_gain=False, out_dir=None, 
     else:
         print(f"Free params: Bias, Sigma, Lam, Scale            EM_Gain={EM_GAIN} (fixed), Sensitivity={SENSITIVITY} (fixed)")
 
-    # 3. Fitting — linear space + Poisson weights
+    # 3. Fitting — log-space LSQ (EMCCD 관례. Meschede 2018 등 관련 논문과 정합.
+    #    PDF 가 4~5 orders of magnitude 를 span 하므로 tail 가중치를 동등하게 주기 위함.
+    #    σ 하한만 0.5 로 완화 (이전: 10.0 이 binding 되어 모든 조건에서 정확히 10.00 이
+    #    반환되던 버그 수정).
     try:
         valid = counts > 0
         x_fit = bin_centers[valid]
         y_fit = hist_y[valid]
-        s_fit = y_err[valid]
 
         if fit_gain:
             def model(x, b, s, l, sc, g):
@@ -116,16 +118,16 @@ def analyze_background_noise(tiff_path, bins=400, fit_gain=False, out_dir=None, 
             model = basden_complete_model
             p0 = [bias_init, sigma_init, lam_init, scale_init]
             bounds = (
-                # sigma 하한을 0.5 로 완화 (이전: 10.0 이 binding 되어 모든 조건에서 정확히 10.00 이 반환되던 버그)
                 [bias_init - 50, 0.5,   1e-5, 0.0],
                 [bias_init + 50, 200.0, 2.0,  np.inf],
             )
 
-        popt, pcov = curve_fit(
-            model, x_fit, y_fit,
+        def log_model(x, *params):
+            return np.log(np.maximum(model(x, *params), 1e-20))
+
+        popt, _ = curve_fit(
+            log_model, x_fit, np.log(y_fit),
             p0=p0,
-            sigma=s_fit,
-            absolute_sigma=False,
             bounds=bounds,
             maxfev=20000,
         )

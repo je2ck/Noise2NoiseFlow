@@ -232,7 +232,7 @@ class ResidualNet(nn.Module):
 
 class ShiftAndLogScale(nn.Module):
     def __init__(self, num_in, num_out, width=4, shift_only=False, activation=nn.ReLU(),
-                 device='cpu', scale_init=1e-4, scale_trainable=True):
+                 device='cpu', scale_init=1e-4, scale_trainable=True, no_shift=False):
         """
         scale_init       : initial value of the log_scale cap (tanh is multiplied by this).
         scale_trainable  : if True, `scale` is a learnable nn.Parameter (original behavior).
@@ -240,10 +240,14 @@ class ShiftAndLogScale(nn.Module):
                            output log_scale from exploding (e.g., for ConditionalAffine
                            used with `cond` arch token, where an unbounded scale led to
                            mode collapse in training).
+        no_shift         : if True, forward returns shift=zeros (only log_scale is learned).
+                           Used for `cond` to eliminate a degenerate training direction
+                           where shift and log_scale co-drift without improving NLL.
         """
         super(ShiftAndLogScale, self).__init__()
         self.width = width
         self.shift_only = shift_only
+        self.no_shift = no_shift
         self.num_in = num_in
         self.num_output = num_out
         scale_tensor = torch.full((1,), float(scale_init), device=device)
@@ -293,5 +297,8 @@ class ShiftAndLogScale(nn.Module):
 
         shift, log_scale = torch.split(x, int(x.shape[1]/2), dim=1)
         log_scale = self.scale * torch.tanh(log_scale)
+
+        if self.no_shift:
+            shift = torch.zeros_like(shift)
 
         return shift, log_scale

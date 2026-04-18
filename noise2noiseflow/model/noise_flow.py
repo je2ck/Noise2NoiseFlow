@@ -106,22 +106,24 @@ class NoiseFlow(nn.Module):
                 bijectors.append(Gain(name='gain_%d' % i, device=self.device))
 
             elif lyr == 'cond':
-                # ShiftAndLogScale with FIXED, non-trainable scale cap.
-                # Bound MUST be wide enough to allow meaningful per-clean
-                # log_scale variation (Panel 7 shows var(z|c) up to 8, so
-                # cond needs log_scale ≈ -log(sqrt(8)) = -1.04). A tight
-                # cap (e.g., 0.5) causes cond to saturate and give up
-                # per-c learning (training pathology observed with 0.5).
-                # 1.5 allows log_scale ∈ (-1.5, +1.5), i.e. scale ∈ (0.22, 4.48)
-                # — enough to correct Panel 7 while still preventing full
-                # mode collapse observed with unbounded cap.
+                # ShiftAndLogScale with FIXED, non-trainable scale cap +
+                # NO shift. Rationale:
+                #   * Bounded scale_init=1.5 → log_scale ∈ (-1.5, 1.5)
+                #     allows meaningful per-clean variance correction
+                #     (Panel 7 originally peaks at var(z|c)≈8, need
+                #     log_scale ≈ -1.04 to flatten).
+                #   * no_shift=True removes the degenerate direction
+                #     (shift(c) + log_scale(c) co-drift) that otherwise
+                #     causes marginal mean offset without helping NLL.
+                # → cond can only re-scale z per clean, cannot shift.
                 bounded_sls = partial(
                     ShiftAndLogScale,
                     scale_init=1.5,
                     scale_trainable=False,
+                    no_shift=True,
                 )
                 print('|-ConditionalAffine(only_clean=True, C={}, '
-                      'scale∈(-1.5,1.5))'.format(cur[0]))
+                      'scale∈(-1.5,1.5), no_shift)'.format(cur[0]))
                 bijectors.append(
                     ConditionalAffine(
                         x_shape=tuple(cur),

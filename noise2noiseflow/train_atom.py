@@ -488,9 +488,25 @@ def try_resume(hps, model: Noise2NoiseFlow, optimizer: torch.optim.Optimizer) ->
         start_epoch = int(start_epoch) + 1
         logging.debug('found an existing previous checkpoint, resuming from epoch {}'.format(start_epoch))
     else:
-        # No prior checkpoints
+        # No prior checkpoints — optional warm-start from --init_from
         start_epoch = 1
-        logging.info("No checkpoint found in %s; starting fresh", hps.model_save_dir)
+        init_from = getattr(hps, 'init_from', None)
+        if init_from and os.path.isfile(init_from):
+            logging.info("Warm-start: loading weights from %s (strict=False)", init_from)
+            ckpt = torch.load(init_from, map_location=hps.device)
+            state = ckpt.get('state_dict', ckpt)
+            missing, unexpected = model.load_state_dict(state, strict=False)
+            if missing:
+                logging.info("  %d keys missing (newly initialized): e.g. %s",
+                             len(missing), missing[:3])
+            if unexpected:
+                logging.info("  %d keys unexpected (ignored): e.g. %s",
+                             len(unexpected), unexpected[:3])
+            # keep epoch 1, fresh optimizer
+        else:
+            if init_from:
+                logging.warning("--init_from given but file not found: %s", init_from)
+            logging.info("No checkpoint found in %s; starting fresh", hps.model_save_dir)
 
     return start_epoch
 

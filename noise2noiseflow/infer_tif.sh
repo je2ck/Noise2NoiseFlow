@@ -17,7 +17,7 @@ CKPT_DIR=./experiments/archive
 # exposure 리스트
 # ==========================
 # MS_LIST=(20 16 14 12 10 8)
-MS_LIST=(5 4 8)
+MS_LIST=(5)
 
 for ms in "${MS_LIST[@]}"; do
   DATA_DIR="${BASEDIR[$ms]}"

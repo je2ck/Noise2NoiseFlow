@@ -64,6 +64,10 @@ def arg_parser():
     parser.add_argument("--n_channels", type=int, default=4,
                         help="Number of image channles")
     parser.add_argument('--no_resume', action='store_true')
+    parser.add_argument('--init_from', type=str, default=None,
+                        help="Path to a checkpoint .pth to warm-start from (strict=False). "
+                             "Used when no local checkpoint exists in logdir — only matching "
+                             "keys are loaded (e.g. a basden-only ckpt to init a basden|cond run).")
     parser.add_argument("--lmbda", type=int, default=1, help="value for lambda in Noise2NoiseFlow loss term")
     parser.add_argument("--denoiser", type=str, default='dncnn',
                         help="Denoiser architecture type, choose between dncnn/unet.")

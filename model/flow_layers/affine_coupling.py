@@ -231,13 +231,27 @@ class ResidualNet(nn.Module):
         return outputs
 
 class ShiftAndLogScale(nn.Module):
-    def __init__(self, num_in, num_out, width=4, shift_only=False, activation=nn.ReLU(), device='cpu'):
+    def __init__(self, num_in, num_out, width=4, shift_only=False, activation=nn.ReLU(),
+                 device='cpu', scale_init=1e-4, scale_trainable=True):
+        """
+        scale_init       : initial value of the log_scale cap (tanh is multiplied by this).
+        scale_trainable  : if True, `scale` is a learnable nn.Parameter (original behavior).
+                           if False, `scale` is a fixed buffer — useful to prevent the
+                           output log_scale from exploding (e.g., for ConditionalAffine
+                           used with `cond` arch token, where an unbounded scale led to
+                           mode collapse in training).
+        """
         super(ShiftAndLogScale, self).__init__()
         self.width = width
         self.shift_only = shift_only
         self.num_in = num_in
         self.num_output = num_out
-        self.scale = nn.Parameter(torch.full((1,), 1e-4, device=device), requires_grad=True)
+        scale_tensor = torch.full((1,), float(scale_init), device=device)
+        if scale_trainable:
+            self.scale = nn.Parameter(scale_tensor, requires_grad=True)
+        else:
+            # Fixed (non-trainable) cap — log_scale ∈ (-scale_init, +scale_init)
+            self.register_buffer('scale', scale_tensor)
 
         self.conv2d_1 = nn.Conv2d(in_channels=self.num_in, out_channels=self.width, kernel_size=3, padding=1)
         nn.init.normal_(self.conv2d_1.weight, mean=0.0, std=self.width / 512 * 0.05)

@@ -1,6 +1,7 @@
 import torch
 from torch import nn
 import numpy as np
+from functools import partial
 
 from model.flow_layers.conv2d1x1 import Conv2d1x1
 from model.flow_layers.affine_coupling import AffineCoupling, ShiftAndLogScale, ConditionalAffine
@@ -105,11 +106,21 @@ class NoiseFlow(nn.Module):
                 bijectors.append(Gain(name='gain_%d' % i, device=self.device))
 
             elif lyr == 'cond':
-                print('|-ConditionalAffine(only_clean=True, C={})'.format(cur[0]))
+                # Use ShiftAndLogScale with a FIXED, non-trainable scale cap
+                # (tanh * 0.5) so log_scale ∈ (-0.5, 0.5). This prevents cond
+                # from collapsing z by learning very large |log_scale|, a
+                # training pathology observed with the default learnable cap.
+                bounded_sls = partial(
+                    ShiftAndLogScale,
+                    scale_init=0.5,
+                    scale_trainable=False,
+                )
+                print('|-ConditionalAffine(only_clean=True, C={}, '
+                      'scale∈(-0.5,0.5))'.format(cur[0]))
                 bijectors.append(
                     ConditionalAffine(
                         x_shape=tuple(cur),
-                        shift_and_log_scale=ShiftAndLogScale,
+                        shift_and_log_scale=bounded_sls,
                         encoder=None,            # only_clean=True 에선 사용 안 함
                         name='cond_%d' % i,
                         device=self.device,

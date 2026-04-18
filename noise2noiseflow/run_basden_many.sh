@@ -96,43 +96,75 @@ do
     echo "Basden Params: Bias=$CURRENT_BIAS, Sigma=$CURRENT_SIGMA, Gain=$CURRENT_GAIN, CIC=$CURRENT_CIC"
     echo "=========================================="
 
-    # 로그 디렉토리 이름 (예: n2nf_basden_2ms)
-    LOG_DIR_NAME="n2nf_real_bs_basden_only_${TIME}" 
+    # --------------------------------------------------------------
+    # 로그 디렉토리
+    # --------------------------------------------------------------
+    LOG_DIR_WARMUP="n2nf_real_bs_basden_warmup_${TIME}"
+    LOG_DIR_NAME="n2nf_real_bs_basden_only_${TIME}"
 
-    # 실제 데이터 경로 (예: ./data-mock-hybrid/2ms)
-    CURRENT_DATA_PATH="${DATA_ROOT}/${TIME}" 
-    
+    CURRENT_DATA_PATH="${DATA_ROOT}/${TIME}"
     if [ ! -d "$CURRENT_DATA_PATH" ]; then
         echo "Error: Data directory not found -> $CURRENT_DATA_PATH"
         exit 1
     fi
 
+    # Shared Basden params
+    COMMON_ARGS=(
+        --sidd_path "$CURRENT_DATA_PATH"
+        --n_batch_train 8
+        --n_batch_test 8
+        --n_patches_per_image 1
+        --patch_height 64
+        --patch_sampling uniform
+        --n_channels 1
+        --epochs_full_valid 10
+        --lu_decomp
+        --lmbda 262144
+        --no_resume
+        --n_train_threads 0
+        --vmin "$CURRENT_VMIN"
+        --vmax "$CURRENT_VMAX"
+        --basden_bias_offset "$CURRENT_BIAS"
+        --basden_readout_sigma "$CURRENT_SIGMA"
+        --basden_em_gain "$CURRENT_GAIN"
+        --basden_cic_lambda "$CURRENT_CIC"
+    )
+
     # --------------------------------------------------------------
-    # 2. Python 실행 (Basden 파라미터 인자 추가)
+    # Stage 1: basden only (warm-up) — let denoiser + basden stabilize
+    #          before cond is introduced. Prevents cond from learning a
+    #          degenerate "collapse z" shortcut.
     # --------------------------------------------------------------
+    WARMUP_EPOCHS=50
+    echo ">>> [${TIME}] Stage 1 (warm-up): arch=basden, epochs=${WARMUP_EPOCHS}"
+    python train_atom.py \
+        --arch "basden" \
+        --epochs "$WARMUP_EPOCHS" \
+        --logdir "$LOG_DIR_WARMUP" \
+        "${COMMON_ARGS[@]}"
+
+    # Path to the last epoch checkpoint saved by stage 1
+    STAGE1_CKPT="${LOG_ROOT}/${LOG_DIR_WARMUP}/saved_models/epoch_${WARMUP_EPOCHS}_nf_model_net.pth"
+    if [ ! -f "$STAGE1_CKPT" ]; then
+        echo "Error: warm-up checkpoint not found: $STAGE1_CKPT"
+        exit 1
+    fi
+
+    sleep 10
+
+    # --------------------------------------------------------------
+    # Stage 2: basden|cond — warm-started from stage 1 via --init_from
+    # --------------------------------------------------------------
+    FULL_EPOCHS=200
+    echo ""
+    echo ">>> [${TIME}] Stage 2: arch=basden|cond, epochs=${FULL_EPOCHS}, init_from=${STAGE1_CKPT}"
     python train_atom.py \
         --arch "basden|cond" \
-        --sidd_path "$CURRENT_DATA_PATH" \
-        --epochs 200 \
-        --n_batch_train 8 \
-        --n_batch_test 8 \
-        --n_patches_per_image 1 \
-        --patch_height 64 \
-        --patch_sampling uniform \
-        --n_channels 1 \
-        --epochs_full_valid 10 \
-        --lu_decomp \
+        --epochs "$FULL_EPOCHS" \
         --logdir "$LOG_DIR_NAME" \
-        --lmbda 262144 \
-        --no_resume \
-        --n_train_threads 0 \
-        --vmin "$CURRENT_VMIN" \
-        --vmax "$CURRENT_VMAX" \
-        --basden_bias_offset "$CURRENT_BIAS" \
-        --basden_readout_sigma "$CURRENT_SIGMA" \
-        --basden_em_gain "$CURRENT_GAIN" \
-        --basden_cic_lambda "$CURRENT_CIC"
-    
+        --init_from "$STAGE1_CKPT" \
+        "${COMMON_ARGS[@]}"
+
     sleep 60
 
     echo ">>> Checkpoints and logs saved to ${LOG_ROOT}/${LOG_DIR_NAME}"

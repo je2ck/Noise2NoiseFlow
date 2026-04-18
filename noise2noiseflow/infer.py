@@ -4,6 +4,7 @@ import types
 import torch
 import numpy as np
 import argparse
+import matplotlib.pyplot as plt
 
 from tifffile import imwrite
 
@@ -21,7 +22,8 @@ def build_hps(args, device='cuda'):
 
     # 학습 때와 동일하게 맞추기
     if args.basden:
-        hps.arch = "basden|unc|unc|unc|gain|unc|unc|unc|unc"
+        # hps.arch = "basden|unc|unc|unc|unc|gain|unc|unc|unc|unc"
+        hps.arch = "basden"
         hps.basden_config = {
             'vmin': args.vmin,
             'vmax': args.vmax,
@@ -33,6 +35,7 @@ def build_hps(args, device='cuda'):
             
         }
     else:
+        exit("Basden 옵션이 켜져 있어야 합니다.")
         hps.arch = "unc|unc|unc|unc|gain|unc|unc|unc|unc"
         hps.basden_config = None
     hps.flow_permutation = 1  # ← arg_parser 기본값이 뭔지 확인해서 필요하면 수정
@@ -135,7 +138,7 @@ def denoise_tif(
     - save_single=True면 개별 파일로 저장
     - False면 저장하지 않고 배열만 리턴 (스택 만들 때 사용)
     """
-    noisy = _load_tif_atom(noisy_tif_path)    # float32, [0,1], (C?,H,W)
+    noisy = _load_tif_atom(noisy_tif_path, hps.vmin, hps.vmax)    # float32, [0,1], (C?,H,W)
     C = hps.x_shape[1]                        # 2
     noisy = _ensure_channels(noisy, C=C)      # (2,H,W)
 
@@ -198,6 +201,7 @@ def denoise_and_stack_a_only(
         return
 
     denoised_list = []
+    print(f"Found {len(scene_dirs)} scenes under {test_root}")
 
     for i, scene in enumerate(scene_dirs):
         if max_scenes is not None and i >= max_scenes:
@@ -319,52 +323,38 @@ def denoise_background_file(
 
     imwrite(out_tif_path, save_arr_to_write)
     print(f"[bg saved] {bg_tif_path} -> {out_tif_path}, shape={save_arr_to_write.shape}")
-
-# ----------------------
-# 5) 스크립트로 사용할 때
-# ----------------------
-# if __name__ == '__main__':
-#     ckpt_path = 'experiments/weights/best_model_real.pth'
-#     test_root = './data_atom/test'
-
-#     model, hps = load_trained_model(ckpt_path, device='cuda')
-
-#     # (1) 필요하면 여전히 개별 파일 저장
-#     # denoise_test_folder(model, hps, test_root)
-
-#     # (2) a.tif만 모아서 하나의 멀티페이지 TIFF로 저장
-#     out_stack_path = './data_atom/denoised_a_stack.tif'
-#     denoise_and_stack_a_only(
-#         model,
-#         hps,
-#         test_root,
-#         out_tif_path=out_stack_path,
-#         to_raw_scale=True,
-#         max_scenes=None,   # 예: 100으로 두면 처음 100 scene만
-#     )
+    
     
 if __name__ == '__main__':
     args = argparse.ArgumentParser()
-    args.add_argument('--vmin', type=float, default=415.0, help='Global VMIN for normalization')
-    args.add_argument('--vmax', type=float, default=655.0, help='Global VMAX for normalization')
+    args.add_argument('--vmin', type=float, default=384.0, help='Global VMIN for normalization')
+    args.add_argument('--vmax', type=float, default=677.0, help='Global VMAX for normalization')
     
     # basden layer config
     args.add_argument('--basden', action='store_true', help='Use Basden model if specified')
-    args.add_argument('--basden_bias_offset', type=float, default=457.80, help='Bias offset for Basden layer')
-    args.add_argument('--basden_readout_sigma', type=float, default=19.05, help='Readout sigma (ADU) for Basden layer')
-    args.add_argument('--basden_em_gain', type=float, default=205.92, help='EM gain for Basden layer')
+    args.add_argument('--basden_bias_offset', type=float, default=441.13, help='Bias offset for Basden layer')
+    args.add_argument('--basden_readout_sigma', type=float, default=19.64, help='Readout sigma (ADU) for Basden layer')
+    args.add_argument('--basden_em_gain', type=float, default=200.0, help='EM gain for Basden layer')
     args.add_argument('--basden_sensitivity', type=float, default=4.88, help='Sensitivity (e-/ADU) for Basden layer')
-    args.add_argument('--basden_cic_lambda', type=float, default=0.0418, help='CIC lambda for Basden layer')
+    args.add_argument('--basden_cic_lambda', type=float, default=0.0580, help='CIC lambda for Basden layer')
     args = args.parse_args()
     
-    ckpt_path = 'experiments/archive/real_hybrid_8ms_best.pth'
+    ckpt_path = 'experiments/archive/real_basden_cond_only_4ms_last.pth'
+    test_root = './data_atom/real_4ms_conseq/train'
 
     model, hps = load_trained_model(args, ckpt_path, device='cuda')
 
-    # (1) 원래 test scenes 디노이즈
-    # denoise_test_folder(model, hps, test_root)
+    out_stack_path = '../../data-prep/data/20251216_4_4_20_array/4ms_denoised_basden_cond_only_train.tif'
+    denoise_and_stack_a_only(
+        model,
+        hps,
+        test_root,
+        out_tif_path=out_stack_path,
+        to_raw_scale=True,
+        max_scenes=None,   # 예: 100으로 두면 처음 100 scene만
+    )
 
     # (2) background 한 파일 디노이즈
-    bg_in  = './data_atom/data_atom_8_10_20_conseq/background.tif'
-    bg_out = './data_atom/data_atom_8_10_20_conseq/background_denoised_hybrid.tif'
+    bg_in = '../../data-prep/data/20251216_4_4_20_array/raw/background_4ms.tif'
+    bg_out = '../../data-prep/data/20251216_4_4_20_array/4ms_bg_denoised_basden_cond_only_train.tif'
     denoise_background_file(model, hps, bg_in, bg_out, to_raw_scale=True)

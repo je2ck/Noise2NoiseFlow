@@ -61,6 +61,7 @@ def main():
     # 열어서 페이지 수 확인
     with tifffile.TiffFile(args.tif_path) as tif:
         num_pages = len(tif.pages)
+        print(f"Total pages in TIF: {num_pages}")
         if num_pages == 0:
             raise ValueError("Input TIF contains no frames.")
 
@@ -95,6 +96,7 @@ def main():
             root.mkdir(parents=True, exist_ok=True)
 
         counts = {"train": 0, "val": 0, "test": 0}
+        print(f"Total scenes to process: {num_scenes}")
 
         for offset, triple in enumerate(scene_triples):
             subset = split_plan[offset]  # "train" / "val" / "test"

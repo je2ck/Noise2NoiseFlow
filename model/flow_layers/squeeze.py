@@ -1,7 +1,8 @@
+import torch
 from torch import nn
 
 class SqueezeLayer(nn.Module):
-	def __init__(self, factor, level, name='squeeze'):
+	def __init__(self, factor, level=0, name='squeeze'):
 		super(SqueezeLayer, self).__init__()
 		self.factor = factor
 		self.name = name
@@ -13,7 +14,24 @@ class SqueezeLayer(nn.Module):
 
 	def _forward_and_log_det_jacobian(self, x, **kwargs):
 		output = squeeze2d(x, self.factor)
-		return output, 0
+		log_det = torch.zeros(x.shape[0], device=x.device, dtype=x.dtype)
+		return output, log_det
+
+
+class UnsqueezeLayer(nn.Module):
+	def __init__(self, factor, level=0, name='unsqueeze'):
+		super(UnsqueezeLayer, self).__init__()
+		self.factor = factor
+		self.name = name
+		self.level = level
+
+	def _inverse(self, z, **kwargs):
+		return squeeze2d(z, self.factor)
+
+	def _forward_and_log_det_jacobian(self, x, **kwargs):
+		output = unsqueeze2d(x, self.factor)
+		log_det = torch.zeros(x.shape[0], device=x.device, dtype=x.dtype)
+		return output, log_det
 
 def squeeze2d(input, factor=2):
 	#assert factor >= 1 and isinstance(factor, int)

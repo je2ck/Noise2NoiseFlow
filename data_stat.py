@@ -65,7 +65,7 @@ def stats_with_percentile(path, percentiles=[0.1, 1, 5, 50, 95, 99, 99.9]):
 
 # 사용 예시
 if __name__ == "__main__":
-    file_path = "/Users/jaeickbae/Documents/research/denoise/data-prep/data/20251216_4_4_20_array/raw/4ms.tif"
+    file_path = "/Users/jaeickbae/Documents/research/denoise/data-prep/data/4ms_array_bs/raw/4ms_data.tif"
     print(f"Analyzing: {file_path}")
     stats = stats_with_percentile(file_path)
     

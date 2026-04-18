@@ -8,6 +8,7 @@ from model.flow_layers.signal_dependant import SignalDependant
 from model.flow_layers.gain import Gain
 from model.flow_layers.utils import SdnModelScale
 from model.flow_layers.basden import BasdenFlowLayer, BasdenAdaptor
+from model.flow_layers.squeeze import SqueezeLayer, UnsqueezeLayer
 # from model.flow_layers.linear_transformation import LinearTransformation
 
 class NoiseFlow(nn.Module):
@@ -23,59 +24,67 @@ class NoiseFlow(nn.Module):
         self.model = nn.ModuleList(self.noise_flow_arch(x_shape))
 
     def noise_flow_arch(self, x_shape):
-        arch_lyrs = self.arch.split('|')  # e.g., unc|sdn|unc|gain|unc
+        """
+        Tokens:
+          basden  - physical EMCCD model (BasdenAdaptor + BasdenFlowLayer)
+          sq      - Squeeze (space-to-depth, factor 2): [C,H,W] -> [4C, H/2, W/2]
+          usq     - Unsqueeze (depth-to-space, factor 2): inverse of sq
+          unc     - Conv2d1x1 permutation + AffineCoupling
+          sdn     - SignalDependant (needs clean/iso/cam)
+          gain    - scalar gain
+        Example:  basden|sq|unc|unc|unc|usq
+        """
+        arch_lyrs = self.arch.split('|')
         bijectors = []
+        cur = list(x_shape)   # [C, H, W] — updated by sq/usq
         for i, lyr in enumerate(arch_lyrs):
-            is_last_layer = False
-            
             if lyr == 'basden':
                 print('|-BasdenAdaptor')
                 bijectors.append(
-                    BasdenAdaptor(num_channels=x_shape[0], device=self.device)
+                    BasdenAdaptor(num_channels=cur[0], device=self.device)
                 )
-                
                 print('|-BasdenFlowLayer')
                 bijectors.append(
-                    BasdenFlowLayer(
-                        config=self.basden_config,
-                        device=self.device
-                    )
+                    BasdenFlowLayer(config=self.basden_config, device=self.device)
                 )
 
-            if lyr == 'unc':
+            elif lyr == 'sq':
+                print('|-Squeeze   in={}'.format(cur), end='')
+                bijectors.append(SqueezeLayer(factor=2, level=i, name='sq_%d' % i))
+                cur = [cur[0] * 4, cur[1] // 2, cur[2] // 2]
+                print(' -> out={}'.format(cur))
+
+            elif lyr == 'usq':
+                print('|-Unsqueeze in={}'.format(cur), end='')
+                bijectors.append(UnsqueezeLayer(factor=2, level=i, name='usq_%d' % i))
+                cur = [cur[0] // 4, cur[1] * 2, cur[2] * 2]
+                print(' -> out={}'.format(cur))
+
+            elif lyr == 'unc':
                 if self.flow_permutation == 0:
-                    # TODO impoliment permute
                     pass
                 elif self.flow_permutation == 1:
-                    print('|-Conv2d1x1')
+                    print('|-Conv2d1x1 (C={})'.format(cur[0]))
                     bijectors.append(
                         Conv2d1x1(
-                            num_channels=x_shape[0],
+                            num_channels=cur[0],
                             LU_decomposed=self.decomp,
                             name='Conv2d_1x1_{}'.format(i)
                         )
                     )
                 else:
                     print('|-No permutation specified. Not using any.')
-                    # raise Exception("Flow permutation not understood")
 
-                print('|-AffineCoupling')
+                print('|-AffineCoupling (C={})'.format(cur[0]))
                 bijectors.append(
                     AffineCoupling(
-                        x_shape=x_shape,
+                        x_shape=tuple(cur),
                         shift_and_log_scale=ShiftAndLogScale,
                         name='unc_%d' % i,
                         device=self.device
                     )
                 )
-            # elif lyr == 'lt':
-            #     print('|-LinearTransfomation')
-            #     bijectors.append(
-            #         LinearTransformation(
-            #             name='lt_{}'.format(i),
-            #             device='cuda'
-            #         )
-            #     )
+
             elif lyr == 'sdn':
                 print('|-SignalDependant')
                 bijectors.append(
@@ -85,11 +94,19 @@ class NoiseFlow(nn.Module):
                         param_inits=self.param_inits
                     )
                 )
+
             elif lyr == 'gain':
                 print('|-Gain')
-                bijectors.append(
-                    Gain(name='gain_%d' % i, device=self.device)
-                )
+                bijectors.append(Gain(name='gain_%d' % i, device=self.device))
+
+            else:
+                raise ValueError("Unknown arch token: {!r}".format(lyr))
+
+        if cur != list(x_shape):
+            raise ValueError(
+                "Arch must return to original shape {} but ended at {}. "
+                "Each 'sq' needs a matching 'usq'.".format(list(x_shape), cur)
+            )
 
         return bijectors
 

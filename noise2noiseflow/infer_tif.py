@@ -18,7 +18,7 @@ from train_atom import init_params, _load_tif, _load_tif_atom, _ensure_channels
 def build_hps(args, device='cuda'):
     hps = types.SimpleNamespace()
     if args.basden:
-        hps.arch = "basden|sds"
+        hps.arch = "basden|psds"
         hps.basden_config = {
             'vmin': args.vmin, 'vmax': args.vmax,
             'bias_offset': args.basden_bias_offset,

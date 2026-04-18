@@ -108,16 +108,15 @@ do
     fi
 
     # --------------------------------------------------------------
-    # Single-stage training with arch="basden|sds":
-    #   - sds is parametric (2 params, near-identity init) → stable,
-    #     no warm-up required (unlike the unstable NN-based `cond`).
-    #   - Targets Panel 7 signal-dependent residual via
-    #     z = x / sqrt(β₁·clean + β₂).
+    # arch="basden|psds" — Basden + log-quadratic signal-dependent scale.
+    # `psds` (3 params) can represent the peaked var(z|c) shape observed
+    # in residual_diag Panel 7, unlike monotone `sds`. Stable (scalar
+    # params only, no NN, no shift) → no warm-up needed.
     # --------------------------------------------------------------
     EPOCHS=250
-    echo ">>> [${TIME}] arch=basden|sds, epochs=${EPOCHS}"
+    echo ">>> [${TIME}] arch=basden|psds, epochs=${EPOCHS}"
     python train_atom.py \
-        --arch "basden|sds" \
+        --arch "basden|psds" \
         --epochs "$EPOCHS" \
         --logdir "$LOG_DIR_NAME" \
         --sidd_path "$CURRENT_DATA_PATH" \

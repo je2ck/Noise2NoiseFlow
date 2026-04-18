@@ -45,6 +45,48 @@ class SignalDependentScale(nn.Module):
         return z * s
 
 
+class PolySignalDependentScale(nn.Module):
+    """
+    Polynomial signal-dependent scale (extension of SignalDependentScale).
+
+      log σ²(c) = β₁ c² + β₂ c + β₃
+      s(c)     = exp(½ log σ²(c))
+      z        = x / s(c)
+
+    Unlike SignalDependentScale (linear-in-c NLF), this can represent a
+    *peaked* var(z|c) shape — which is what residual_diag Panel 7 shows
+    for atom-imaging data (peak at PSF-flank clean values, not monotone).
+
+    3 learnable scalars. Initial (all zero) → log σ² = 0 → s = 1 → identity.
+    No shift, no NN → no degenerate direction.
+    """
+    def __init__(self, name='psds', device='cuda'):
+        super().__init__()
+        self.name = name
+        # log σ² = β₁ c² + β₂ c + β₃
+        self.b1 = nn.Parameter(torch.zeros(1, device=device))
+        self.b2 = nn.Parameter(torch.zeros(1, device=device))
+        self.b3 = nn.Parameter(torch.zeros(1, device=device))
+
+    def _log_var(self, clean):
+        c = torch.clamp(clean, min=0.0)
+        return self.b1 * c.pow(2) + self.b2 * c + self.b3
+
+    def _compute_s(self, clean):
+        return torch.exp(0.5 * self._log_var(clean))
+
+    def _forward_and_log_det_jacobian(self, x, **kwargs):
+        clean = kwargs['clean']
+        s = self._compute_s(clean)
+        z = x / s
+        # z = x / s  ⇒  log|det J_forward| = -sum(log s) = -0.5 sum(log σ²)
+        log_det = -0.5 * self._log_var(clean).sum(dim=[1, 2, 3])
+        return z, log_det
+
+    def _inverse(self, z, **kwargs):
+        return z * self._compute_s(kwargs['clean'])
+
+
 # --- Real-NVP ---
 class AffineCoupling(nn.Module):
     def __init__(self, x_shape, shift_and_log_scale, name="real_nvp", device='cuda'):

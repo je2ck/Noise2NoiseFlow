@@ -5,7 +5,8 @@ from functools import partial
 
 from model.flow_layers.conv2d1x1 import Conv2d1x1
 from model.flow_layers.affine_coupling import (
-    AffineCoupling, ShiftAndLogScale, ConditionalAffine, SignalDependentScale,
+    AffineCoupling, ShiftAndLogScale, ConditionalAffine,
+    SignalDependentScale, PolySignalDependentScale,
 )
 from model.flow_layers.signal_dependant import SignalDependant
 from model.flow_layers.gain import Gain
@@ -33,7 +34,10 @@ class NoiseFlow(nn.Module):
           sds     - SignalDependentScale (Noise Flow S layer, clean-only):
                     z = x / sqrt(β₁·clean + β₂), 2 learnable parameters.
                     Parametric, no degenerate direction. Targets panel 7
-                    signal-dependent variance.
+                    signal-dependent variance (monotone form).
+          psds    - PolySignalDependentScale: log-quadratic variance form,
+                    log σ²(c) = β₁ c² + β₂ c + β₃.  3 learnable scalars.
+                    Can represent peaked var(z|c) shape (unlike sds).
           cond    - ConditionalAffine(only_clean=True): NN-based per-pixel
                     shift/log_scale. More expressive than sds but has
                     degenerate shift↔scale direction that can cause collapse.
@@ -116,6 +120,15 @@ class NoiseFlow(nn.Module):
                 bijectors.append(
                     SignalDependentScale(
                         name='sds_%d' % i,
+                        device=self.device,
+                    )
+                )
+
+            elif lyr == 'psds':
+                print('|-PolySignalDependentScale (log-quadratic, 3 params)')
+                bijectors.append(
+                    PolySignalDependentScale(
+                        name='psds_%d' % i,
                         device=self.device,
                     )
                 )

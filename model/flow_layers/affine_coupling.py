@@ -3,6 +3,48 @@ from torch import nn
 from torch.nn import functional as F, init
 
 
+# --- Signal-dependent scale (Noise Flow paper's "S" layer, clean-only) ---
+class SignalDependentScale(nn.Module):
+    """
+    Parametric signal-dependent scale layer. Adapts Noise Flow (Abdelhamed 2019)
+    Eq. 12 to clean-only conditioning (no iso/cam).
+
+      z = x / s,    s = sqrt(β₁ · clean + β₂)
+
+    Only two trainable scalars (β₁, β₂), enforced positive via exp
+    parametrization:  β_i = exp(log_b_i).  This eliminates the degenerate
+    (shift ↔ log_scale) direction that caused the free `cond` layer to
+    collapse or drift — here there is *no* shift, and the scale is forced
+    into the physically motivated signal-dependent NLF form.
+
+    Initialized to identity: β₁ ≈ 0, β₂ = 1  → s ≈ 1 everywhere.
+    """
+    def __init__(self, name='sds', device='cuda', log_b1_init=-5.0, log_b2_init=0.0):
+        super().__init__()
+        self.name = name
+        self.log_b1 = nn.Parameter(torch.tensor(float(log_b1_init), device=device))
+        self.log_b2 = nn.Parameter(torch.tensor(float(log_b2_init), device=device))
+
+    def _compute_s(self, clean):
+        # Clamp clean to non-negative (atom signal is non-negative).
+        # With β₂ > 0 enforced by exp, sqrt argument is always ≥ β₂ > 0.
+        clean_safe = torch.clamp(clean, min=0.0)
+        b1 = torch.exp(self.log_b1)
+        b2 = torch.exp(self.log_b2)
+        return torch.sqrt(b1 * clean_safe + b2)
+
+    def _forward_and_log_det_jacobian(self, x, **kwargs):
+        s = self._compute_s(kwargs['clean'])
+        z = x / s
+        # z = x/s  ⇒  dz/dx = 1/s, log|det J| = -sum(log s)
+        log_det = -torch.log(s).sum(dim=[1, 2, 3])
+        return z, log_det
+
+    def _inverse(self, z, **kwargs):
+        s = self._compute_s(kwargs['clean'])
+        return z * s
+
+
 # --- Real-NVP ---
 class AffineCoupling(nn.Module):
     def __init__(self, x_shape, shift_and_log_scale, name="real_nvp", device='cuda'):

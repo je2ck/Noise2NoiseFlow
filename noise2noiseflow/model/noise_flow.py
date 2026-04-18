@@ -4,7 +4,9 @@ import numpy as np
 from functools import partial
 
 from model.flow_layers.conv2d1x1 import Conv2d1x1
-from model.flow_layers.affine_coupling import AffineCoupling, ShiftAndLogScale, ConditionalAffine
+from model.flow_layers.affine_coupling import (
+    AffineCoupling, ShiftAndLogScale, ConditionalAffine, SignalDependentScale,
+)
 from model.flow_layers.signal_dependant import SignalDependant
 from model.flow_layers.gain import Gain
 from model.flow_layers.utils import SdnModelScale
@@ -28,16 +30,20 @@ class NoiseFlow(nn.Module):
         """
         Tokens:
           basden  - physical EMCCD model (BasdenAdaptor + BasdenFlowLayer)
-          cond    - ConditionalAffine(only_clean=True): per-pixel shift/log_scale
-                    predicted from the denoised (clean) image.
-                    Targets signal-dependent residual that Basden cannot capture
-                    (panel 7 of residual_diag).
+          sds     - SignalDependentScale (Noise Flow S layer, clean-only):
+                    z = x / sqrt(β₁·clean + β₂), 2 learnable parameters.
+                    Parametric, no degenerate direction. Targets panel 7
+                    signal-dependent variance.
+          cond    - ConditionalAffine(only_clean=True): NN-based per-pixel
+                    shift/log_scale. More expressive than sds but has
+                    degenerate shift↔scale direction that can cause collapse.
           sq      - Squeeze (space-to-depth, factor 2): [C,H,W] -> [4C, H/2, W/2]
           usq     - Unsqueeze (depth-to-space, factor 2): inverse of sq
           unc     - Conv2d1x1 permutation + AffineCoupling
           sdn     - SignalDependant (needs clean/iso/cam)
           gain    - scalar gain
-        Example:  basden|cond              (current recommendation)
+        Example:  basden|sds               (parametric cond, recommended)
+                  basden|cond              (NN-based cond)
                   basden|sq|unc|unc|unc|usq (if spatial structure remains)
         """
         arch_lyrs = self.arch.split('|')
@@ -104,6 +110,15 @@ class NoiseFlow(nn.Module):
             elif lyr == 'gain':
                 print('|-Gain')
                 bijectors.append(Gain(name='gain_%d' % i, device=self.device))
+
+            elif lyr == 'sds':
+                print('|-SignalDependentScale (parametric, 2 params)')
+                bijectors.append(
+                    SignalDependentScale(
+                        name='sds_%d' % i,
+                        device=self.device,
+                    )
+                )
 
             elif lyr == 'cond':
                 # ShiftAndLogScale with FIXED, non-trainable scale cap +

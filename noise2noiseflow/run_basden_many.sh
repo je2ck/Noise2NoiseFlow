@@ -99,7 +99,6 @@ do
     # --------------------------------------------------------------
     # 로그 디렉토리
     # --------------------------------------------------------------
-    LOG_DIR_WARMUP="n2nf_real_bs_basden_warmup_${TIME}"
     LOG_DIR_NAME="n2nf_real_bs_basden_only_${TIME}"
 
     CURRENT_DATA_PATH="${DATA_ROOT}/${TIME}"
@@ -108,61 +107,37 @@ do
         exit 1
     fi
 
-    # Shared Basden params
-    COMMON_ARGS=(
-        --sidd_path "$CURRENT_DATA_PATH"
-        --n_batch_train 8
-        --n_batch_test 8
-        --n_patches_per_image 1
-        --patch_height 64
-        --patch_sampling uniform
-        --n_channels 1
-        --epochs_full_valid 10
-        --lu_decomp
-        --lmbda 262144
-        --no_resume
-        --n_train_threads 0
-        --vmin "$CURRENT_VMIN"
-        --vmax "$CURRENT_VMAX"
-        --basden_bias_offset "$CURRENT_BIAS"
-        --basden_readout_sigma "$CURRENT_SIGMA"
-        --basden_em_gain "$CURRENT_GAIN"
-        --basden_cic_lambda "$CURRENT_CIC"
-    )
-
     # --------------------------------------------------------------
-    # Stage 1: basden only (warm-up) — let denoiser + basden stabilize
-    #          before cond is introduced. Prevents cond from learning a
-    #          degenerate "collapse z" shortcut.
+    # Single-stage training with arch="basden|sds":
+    #   - sds is parametric (2 params, near-identity init) → stable,
+    #     no warm-up required (unlike the unstable NN-based `cond`).
+    #   - Targets Panel 7 signal-dependent residual via
+    #     z = x / sqrt(β₁·clean + β₂).
     # --------------------------------------------------------------
-    WARMUP_EPOCHS=50
-    echo ">>> [${TIME}] Stage 1 (warm-up): arch=basden, epochs=${WARMUP_EPOCHS}"
+    EPOCHS=250
+    echo ">>> [${TIME}] arch=basden|sds, epochs=${EPOCHS}"
     python train_atom.py \
-        --arch "basden" \
-        --epochs "$WARMUP_EPOCHS" \
-        --logdir "$LOG_DIR_WARMUP" \
-        "${COMMON_ARGS[@]}"
-
-    STAGE1_CKPT="${LOG_ROOT}/${LOG_DIR_WARMUP}/saved_models/epoch_${WARMUP_EPOCHS}_nf_model_net.pth"
-    if [ ! -f "$STAGE1_CKPT" ]; then
-        echo "Error: warm-up checkpoint not found: $STAGE1_CKPT"
-        exit 1
-    fi
-
-    sleep 10
-
-    # --------------------------------------------------------------
-    # Stage 2: basden|cond — warm-started from stage 1 via --init_from
-    # --------------------------------------------------------------
-    FULL_EPOCHS=200
-    echo ""
-    echo ">>> [${TIME}] Stage 2: arch=basden|cond, epochs=${FULL_EPOCHS}, init_from=${STAGE1_CKPT}"
-    python train_atom.py \
-        --arch "basden|cond" \
-        --epochs "$FULL_EPOCHS" \
+        --arch "basden|sds" \
+        --epochs "$EPOCHS" \
         --logdir "$LOG_DIR_NAME" \
-        --init_from "$STAGE1_CKPT" \
-        "${COMMON_ARGS[@]}"
+        --sidd_path "$CURRENT_DATA_PATH" \
+        --n_batch_train 8 \
+        --n_batch_test 8 \
+        --n_patches_per_image 1 \
+        --patch_height 64 \
+        --patch_sampling uniform \
+        --n_channels 1 \
+        --epochs_full_valid 10 \
+        --lu_decomp \
+        --lmbda 262144 \
+        --no_resume \
+        --n_train_threads 0 \
+        --vmin "$CURRENT_VMIN" \
+        --vmax "$CURRENT_VMAX" \
+        --basden_bias_offset "$CURRENT_BIAS" \
+        --basden_readout_sigma "$CURRENT_SIGMA" \
+        --basden_em_gain "$CURRENT_GAIN" \
+        --basden_cic_lambda "$CURRENT_CIC"
 
     sleep 60
 

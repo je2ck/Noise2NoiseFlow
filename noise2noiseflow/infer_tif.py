@@ -51,7 +51,7 @@ def load_trained_model(args, ckpt_path: str, device='cuda'):
         hps.x_shape[1:], arch=hps.arch, flow_permutation=hps.flow_permutation,
         param_inits=param_inits, lu_decomp=hps.lu_decomp, basden_config=hps.basden_config,
         denoiser_model=hps.denoiser,
-        dncnn_num_layers=getattr(args, 'dncnn_num_layers', 9),
+        dncnn_num_layers=getattr(args, 'dncnn_num_layers', 25),
         lmbda=hps.lmbda, device=hps.device
     )
     ckpt = torch.load(ckpt_path, map_location=hps.device)
@@ -114,8 +114,8 @@ if __name__ == '__main__':
     parser.add_argument('--basden_em_gain', type=float, default=300.0)
     parser.add_argument('--basden_sensitivity', type=float, default=4.15)
     parser.add_argument('--basden_cic_lambda', type=float, default=0.0574)
-    parser.add_argument('--dncnn_num_layers', type=int, default=9,
-                        help="Must match the value used during training")
+    parser.add_argument('--dncnn_num_layers', type=int, default=25,
+                        help="Must match the value used during training (default 25)")
     args = parser.parse_args()
 
     model, hps = load_trained_model(args, args.ckpt)

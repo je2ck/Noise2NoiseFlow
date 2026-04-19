@@ -61,7 +61,8 @@ for LMBDA in "${LMBDA_LIST[@]}"; do
         --vmax "$VMAX" \
         --basden_bias_offset "$BIAS" \
         --basden_readout_sigma "$READOUT" \
-        --basden_cic_lambda "$CIC"
+        --basden_cic_lambda "$CIC" \
+        --dncnn_num_layers 25
 done
 
 echo ""

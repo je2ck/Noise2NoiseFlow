@@ -114,9 +114,9 @@ do
     # params only, no NN, no shift) → no warm-up needed.
     # --------------------------------------------------------------
     EPOCHS=250
-    echo ">>> [${TIME}] arch=basden|psds, epochs=${EPOCHS}"
+    echo ">>> [${TIME}] arch=basden, epochs=${EPOCHS}"
     python train_atom.py \
-        --arch "basden|psds" \
+        --arch "basden" \
         --epochs "$EPOCHS" \
         --logdir "$LOG_DIR_NAME" \
         --sidd_path "$CURRENT_DATA_PATH" \
@@ -129,6 +129,7 @@ do
         --epochs_full_valid 10 \
         --lu_decomp \
         --lmbda 262144 \
+        --dncnn_num_layers 25 \
         --no_resume \
         --n_train_threads 0 \
         --vmin "$CURRENT_VMIN" \

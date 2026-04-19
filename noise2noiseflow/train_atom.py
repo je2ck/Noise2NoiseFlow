@@ -433,7 +433,7 @@ def build_model_and_optimizer(hps) -> Tuple[Noise2NoiseFlow, torch.optim.Optimiz
         lu_decomp=hps.lu_decomp,
         basden_config=hps.basden_params,
         denoiser_model=hps.denoiser,
-        dncnn_num_layers=getattr(hps, 'dncnn_num_layers', 9),
+        dncnn_num_layers=getattr(hps, 'dncnn_num_layers', 25),
         lmbda=hps.lmbda,
         device=hps.device,
     )

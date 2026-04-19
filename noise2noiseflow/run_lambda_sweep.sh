@@ -72,6 +72,7 @@ for LMBDA in "${LMBDA_LIST[@]}"; do
         --epochs_full_valid 10 \
         --lu_decomp \
         --lmbda "$LMBDA" \
+        --dncnn_num_layers 25 \
         --no_resume \
         --n_train_threads 0 \
         --vmin "$CURRENT_VMIN" \

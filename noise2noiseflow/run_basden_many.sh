@@ -125,8 +125,8 @@ do
         --sidd_path "$CURRENT_DATA_PATH" \
         --n_batch_train 8 \
         --n_batch_test 8 \
-        --n_patches_per_image 1 \
-        --patch_height 64 \
+        --n_patches_per_image 4 \
+        --patch_height 32 \
         --patch_sampling uniform \
         --n_channels 1 \
         --epochs_full_valid 10 \

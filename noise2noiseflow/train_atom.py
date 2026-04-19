@@ -865,6 +865,19 @@ def run_training(hps) -> None:
 
     test_nll_best = np.inf
     last_epoch = start_epoch - 1
+    # Early stopping state
+    es_patience = int(getattr(hps, 'early_stop_patience', 0) or 0)
+    es_min_delta = float(getattr(hps, 'early_stop_min_delta', 1e-4))
+    es_min_epoch = int(getattr(hps, 'early_stop_min_epoch', 0) or 0)
+    es_counter = 0
+    es_best_epoch = start_epoch - 1
+    if es_patience > 0:
+        logging.info(
+            "Early stopping enabled: patience=%d validation checks "
+            "(= %d epochs), min_delta=%.4g, min_epoch=%d",
+            es_patience, es_patience * hps.epochs_full_valid,
+            es_min_delta, es_min_epoch,
+        )
     # NOTE: upper bound is inclusive so `--epochs N` runs N epochs
     # (previously ran N-1 due to off-by-one)
     for epoch in range(start_epoch, hps.epochs + 1):
@@ -915,10 +928,22 @@ def run_training(hps) -> None:
                 os.path.join(hps.model_save_dir, f'epoch_{epoch}_nf_model_net.pth'),
             )
 
-            if ts['nll_mean'] < test_nll_best:
+            if ts['nll_mean'] < test_nll_best - es_min_delta:
                 test_nll_best = ts['nll_mean']
                 save_checkpoint(model, optimizer, epoch, os.path.join(hps.model_save_dir, 'best_model.pth'))
                 is_best = 1
+                es_counter = 0
+                es_best_epoch = epoch
+            else:
+                # No meaningful improvement → advance patience counter
+                es_counter += 1
+                if es_patience > 0:
+                    logging.info(
+                        "Early-stop counter: %d/%d  (best=%.4f @ epoch %d, "
+                        "current=%.4f)",
+                        es_counter, es_patience, test_nll_best,
+                        es_best_epoch, ts['nll_mean'],
+                    )
 
             # Persist per-epoch evaluation metrics alongside the current best-model flag
             test_logger.log({
@@ -968,6 +993,20 @@ def run_training(hps) -> None:
                 sm['loss_mean'],
                 bool(is_best),
             )
+
+            # Early stopping check (after we've updated es_counter above).
+            # Respect min_epoch: never stop before that.
+            if (es_patience > 0
+                    and es_counter >= es_patience
+                    and epoch >= es_min_epoch):
+                logging.info(
+                    "Early stopping at epoch %d — no improvement in test NLL "
+                    "for %d validation checks (min_epoch=%d reached). "
+                    "Best: %.4f @ epoch %d.",
+                    epoch, es_patience, es_min_epoch,
+                    test_nll_best, es_best_epoch,
+                )
+                break
         else:
             logging.info(
                 "Epoch %d summary | train=%.4f (validation skipped)",

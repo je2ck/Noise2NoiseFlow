@@ -108,16 +108,19 @@ do
     fi
 
     # --------------------------------------------------------------
-    # arch="basden|psds" — Basden + log-quadratic signal-dependent scale.
-    # `psds` (3 params) can represent the peaked var(z|c) shape observed
-    # in residual_diag Panel 7, unlike monotone `sds`. Stable (scalar
-    # params only, no NN, no shift) → no warm-up needed.
+    # arch="basden" — pure Basden EMCCD likelihood + DnCNN denoiser.
+    # Trains for at least MIN_EPOCHS and at most MAX_EPOCHS.
+    # Early stopping: after MIN_EPOCHS, if test NLL doesn't improve by
+    # MIN_DELTA for PATIENCE validation checks in a row, training stops.
     # --------------------------------------------------------------
-    EPOCHS=250
-    echo ">>> [${TIME}] arch=basden, epochs=${EPOCHS}"
+    MIN_EPOCHS=200
+    MAX_EPOCHS=500
+    EARLY_STOP_PATIENCE=5          # 5 × 10 = 50 epochs of no improvement
+    EARLY_STOP_MIN_DELTA=0.0005    # nats/dim (~ 0.03% relative NLL change)
+    echo ">>> [${TIME}] arch=basden, epochs=${MIN_EPOCHS}..${MAX_EPOCHS}, patience=${EARLY_STOP_PATIENCE}"
     python train_atom.py \
         --arch "basden" \
-        --epochs "$EPOCHS" \
+        --epochs "$MAX_EPOCHS" \
         --logdir "$LOG_DIR_NAME" \
         --sidd_path "$CURRENT_DATA_PATH" \
         --n_batch_train 8 \
@@ -127,6 +130,9 @@ do
         --patch_sampling uniform \
         --n_channels 1 \
         --epochs_full_valid 10 \
+        --early_stop_patience "$EARLY_STOP_PATIENCE" \
+        --early_stop_min_delta "$EARLY_STOP_MIN_DELTA" \
+        --early_stop_min_epoch "$MIN_EPOCHS" \
         --lu_decomp \
         --lmbda 262144 \
         --dncnn_num_layers 25 \

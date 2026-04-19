@@ -20,6 +20,16 @@ def arg_parser():
                         help="Total number of training epochs")
     parser.add_argument("--epochs_full_valid", type=int,
                         default=50, help="Epochs between valid")
+    parser.add_argument("--early_stop_patience", type=int, default=0,
+                        help="Stop training if test NLL doesn't improve for "
+                             "this many *validation checks* in a row. 0 = disabled.")
+    parser.add_argument("--early_stop_min_delta", type=float, default=1e-4,
+                        help="Minimum NLL improvement to reset the patience "
+                             "counter (default: 1e-4 nats/dim).")
+    parser.add_argument("--early_stop_min_epoch", type=int, default=0,
+                        help="Never trigger early stopping before this epoch "
+                             "(guarantees a minimum training budget even when "
+                             "test NLL plateaus early).")
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument('--lu_decomp', action='store_true', default=False)
     parser.add_argument("--width", type=int, default=512,

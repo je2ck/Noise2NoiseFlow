@@ -71,6 +71,8 @@ def arg_parser():
     parser.add_argument("--lmbda", type=int, default=1, help="value for lambda in Noise2NoiseFlow loss term")
     parser.add_argument("--denoiser", type=str, default='dncnn',
                         help="Denoiser architecture type, choose between dncnn/unet.")
+    parser.add_argument("--dncnn_num_layers", type=int, default=9,
+                        help="Number of layers in DnCNN (default: 9)")
 
     parser.add_argument("--alpha", type=float, default=4, help="Alpha parameter in recorruption")
     parser.add_argument("--sigma", type=float, default=1/256, help="std of the zero mean noise vector z for recorruption")

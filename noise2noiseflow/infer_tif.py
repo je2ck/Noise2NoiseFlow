@@ -17,8 +17,8 @@ from train_atom import init_params, _load_tif, _load_tif_atom, _ensure_channels
 # ----------------------
 def build_hps(args, device='cuda'):
     hps = types.SimpleNamespace()
-    if args.basden:
-        hps.arch = "basden"
+    hps.arch = args.arch
+    if "basden" in args.arch:
         hps.basden_config = {
             'vmin': args.vmin, 'vmax': args.vmax,
             'bias_offset': args.basden_bias_offset,
@@ -28,7 +28,6 @@ def build_hps(args, device='cuda'):
             'cic_lambda': args.basden_cic_lambda,
         }
     else:
-        hps.arch = "unc|unc|unc|unc|gain|unc|unc|unc|unc"
         hps.basden_config = None
 
     hps.flow_permutation = 1
@@ -108,7 +107,12 @@ if __name__ == '__main__':
     # 물리 파라미터
     parser.add_argument('--vmin', type=float, default=384.0)
     parser.add_argument('--vmax', type=float, default=634.0)
-    parser.add_argument('--basden', action='store_true', default=True)
+    parser.add_argument('--arch', type=str, default='basden',
+                        help="Flow arch string (e.g. 'basden', "
+                             "'sq|unc|unc|gain|unc|unc|gain|unc|unc|usq'). "
+                             "If it contains 'basden', basden_config is passed.")
+    parser.add_argument('--basden', action='store_true', default=True,
+                        help="(deprecated — use --arch instead)")
     parser.add_argument('--basden_bias_offset', type=float, default=440.81)
     parser.add_argument('--basden_readout_sigma', type=float, default=19.69)
     parser.add_argument('--basden_em_gain', type=float, default=300.0)

@@ -201,7 +201,7 @@ def main(hps):
                     'nlf0': image['nlf0'].to(hps.device),
                     'nlf1': image['nlf1'].to(hps.device)
                 })
-            n2nflow_loss, nll, mse = n2nflow.loss_u(**kwargs)
+            n2nflow_loss, nll, mse, _prior_nll = n2nflow.loss_u(**kwargs)
             train_loss.append(n2nflow_loss.item())
             train_nll.append(nll)
             train_mse.append(mse)
@@ -247,7 +247,7 @@ def main(hps):
                             'nlf0': image['nlf0'].to(hps.device),
                             'nlf1': image['nlf1'].to(hps.device)
                         })
-                    n2nflow_loss, nll, mse = n2nflow.loss_u(**kwargs)
+                    n2nflow_loss, nll, mse, _prior_nll = n2nflow.loss_u(**kwargs)
                     val_loss.append(n2nflow_loss.item())
                     val_nll.append(nll)
                     val_mse.append(mse)

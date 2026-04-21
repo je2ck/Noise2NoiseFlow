@@ -97,6 +97,24 @@ def arg_parser():
     parser.add_argument('--basden_em_gain', type=float, default=300.00, help='EM gain for Basden layer')
     parser.add_argument('--basden_sensitivity', type=float, default=4.15, help='Sensitivity (e-/ADU) for Basden layer')
     parser.add_argument('--basden_cic_lambda', type=float, default=0.0306, help='CIC lambda for Basden layer')
-    
+
+    # Poisson prior on x_hat (atom-only mask, second NLL term)
+    # Off by default — existing training paths are byte-for-byte identical
+    # unless --use_prior_flow is passed AND --lmbda_prior > 0.
+    parser.add_argument('--use_prior_flow', action='store_true', default=False,
+                        help="Enable continuous-Poisson prior on DnCNN output "
+                             "for atom-like pixels (identified by photon threshold).")
+    parser.add_argument('--prior_lambda_atom', type=float, default=6.4,
+                        help='Expected atom photon count (rate) for Poisson prior. '
+                             'Supply per-exposure value (e.g. 4ms~4.4, 5ms~6.4, 8ms~8.4).')
+    parser.add_argument('--prior_atom_threshold_photon', type=float, default=1.5,
+                        help='Photon threshold on x_hat to identify atom pixels '
+                             'for prior application.')
+    parser.add_argument('--prior_lambda_learnable', action='store_true', default=False,
+                        help='Make prior_lambda_atom trainable (default: fixed).')
+    parser.add_argument('--lmbda_prior', type=float, default=0.0,
+                        help='Weight for Poisson prior NLL in total loss. '
+                             '0 disables the prior even if --use_prior_flow set.')
+
     hps = parser.parse_args()  # So error if typo
     return hps

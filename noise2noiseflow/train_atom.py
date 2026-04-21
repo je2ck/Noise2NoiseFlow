@@ -425,6 +425,29 @@ def build_model_and_optimizer(hps) -> Tuple[Noise2NoiseFlow, torch.optim.Optimiz
     """Create model, optionally load a pretrained denoiser, move to device, and create optimizer."""
     hps.param_inits = init_params()
     hps.basden_params = basden_params(hps)
+    # Poisson prior config (off unless --use_prior_flow and lmbda_prior > 0).
+    prior_cfg = None
+    if getattr(hps, 'use_prior_flow', False) and getattr(hps, 'lmbda_prior', 0.0) > 0.0:
+        prior_cfg = {
+            'enabled': True,
+            'lmbda_prior': float(hps.lmbda_prior),
+            'lambda_atom': float(hps.prior_lambda_atom),
+            'atom_threshold_photon': float(hps.prior_atom_threshold_photon),
+            'learnable': bool(getattr(hps, 'prior_lambda_learnable', False)),
+            'vmin': float(hps.vmin),
+            'vmax': float(hps.vmax),
+            'sensitivity': float(hps.basden_sensitivity),
+            'em_gain': float(hps.basden_em_gain),
+        }
+        logging.info(
+            "[prior] Poisson prior ENABLED: λ_atom=%.3f, threshold=%.3f ph, "
+            "weight=%.3f, learnable=%s",
+            prior_cfg['lambda_atom'],
+            prior_cfg['atom_threshold_photon'],
+            prior_cfg['lmbda_prior'],
+            prior_cfg['learnable'],
+        )
+
     model = Noise2NoiseFlow(
         hps.x_shape[1:],
         arch=hps.arch,
@@ -436,6 +459,7 @@ def build_model_and_optimizer(hps) -> Tuple[Noise2NoiseFlow, torch.optim.Optimiz
         dncnn_num_layers=getattr(hps, 'dncnn_num_layers', 25),
         lmbda=hps.lmbda,
         device=hps.device,
+        prior_cfg=prior_cfg,
     )
 
     if getattr(hps, 'pretrained_denoiser', False):
@@ -534,7 +558,7 @@ def _global_step_offset(dataset_len: int, batch_size: int, epoch: int, batch_ind
 
 def train_one_epoch(model: Noise2NoiseFlow, optimizer: torch.optim.Optimizer, train_loader: DataLoader, hps, writer: SummaryWriter, epoch: int) -> Dict[str, float]:
     model.train()
-    losses, nlls, mses = [], [], []
+    losses, nlls, mses, priors = [], [], [], []
     start = time.time()
 
     num_batches = len(train_loader)
@@ -562,12 +586,14 @@ def train_one_epoch(model: Noise2NoiseFlow, optimizer: torch.optim.Optimizer, tr
         if 'cam' in image.keys():
             kwargs.update({'cam': image['cam'].to(hps.device)})
 
-        loss, nll, mse = model.loss_u(**kwargs)
+        loss, nll, mse, prior_nll = model.loss_u(**kwargs)
         losses.append(loss.item())
         nlls.append(nll)
         mses.append(mse)
+        priors.append(prior_nll)
 
         writer.add_scalar('Train Loss', losses[-1], step)
+        writer.add_scalar('Train Prior NLL', prior_nll, step)
         writer.add_scalar('Train NLL per dim', nll, step)
         writer.add_scalar('Train MSE', mse, step)
 
@@ -576,13 +602,14 @@ def train_one_epoch(model: Noise2NoiseFlow, optimizer: torch.optim.Optimizer, tr
 
         if ((n_patch + 1) % report_interval == 0) or (n_patch + 1 == num_batches):
             logging.info(
-                "Epoch %d | train batch %d/%d | loss=%.4f | nll=%.4f | mse=%.4f",
+                "Epoch %d | train batch %d/%d | loss=%.4f | nll=%.4f | mse=%.4f | prior=%.4f",
                 epoch,
                 n_patch + 1,
                 num_batches,
                 losses[-1],
                 nll,
                 mse,
+                prior_nll,
             )
         if n_patch % 500 == 0:
             gc.collect()
@@ -598,6 +625,7 @@ def train_one_epoch(model: Noise2NoiseFlow, optimizer: torch.optim.Optimizer, tr
         'loss_mean': float(np.mean(losses)) if losses else 0.0,
         'nll_mean': float(np.mean(nlls)) if nlls else 0.0,
         'mse_mean': float(np.mean(mses)) if mses else 0.0,
+        'prior_mean': float(np.mean(priors)) if priors else 0.0,
         'time': elapsed,
     }
 
@@ -630,7 +658,7 @@ def validate_one_epoch(model: Noise2NoiseFlow, val_loader: DataLoader, hps, writ
         if 'cam' in image.keys():
             kwargs.update({'cam': image['cam'].to(hps.device)})
 
-        loss, nll, mse = model.loss_u(**kwargs)
+        loss, nll, mse, prior_nll = model.loss_u(**kwargs)
         losses.append(loss.item())
         nlls.append(nll)
         mses.append(mse)
@@ -638,16 +666,18 @@ def validate_one_epoch(model: Noise2NoiseFlow, val_loader: DataLoader, hps, writ
         writer.add_scalar('Validation Loss', losses[-1], step)
         writer.add_scalar('Validation NLL per dim', nll, step)
         writer.add_scalar('Validation MSE', mse, step)
+        writer.add_scalar('Validation Prior NLL', prior_nll, step)
 
         if ((n_patch + 1) % report_interval == 0) or (n_patch + 1 == num_batches):
             logging.info(
-                "Epoch %d | val batch %d/%d | loss=%.4f | nll=%.4f | mse=%.4f",
+                "Epoch %d | val batch %d/%d | loss=%.4f | nll=%.4f | mse=%.4f | prior=%.4f",
                 epoch,
                 n_patch + 1,
                 num_batches,
                 losses[-1],
                 nll,
                 mse,
+                prior_nll,
             )
 
     elapsed = time.time() - start

@@ -24,31 +24,43 @@ for TIME in "${TIMES[@]}"
 do
     # Normalization + expected atom ROI-sum photon rate per exposure.
     # LAMBDA_ATOM = mean_photon from make_fidelity_table.py
-    # SUM_THLD = ~0.3 × LAMBDA_ATOM (reject bg fluctuations but catch
-    #           dimly reconstructed atoms early in training)
+    # SUM_THLD = ~0.78 × LAMBDA_ATOM  (tight: only strong atom candidates
+    #           pass, minimizing BG false positives that would dilute the
+    #           detected NLL).
     case "$TIME" in
-        "20ms") CURRENT_VMIN=473; CURRENT_VMAX=805; LAMBDA_ATOM=20.77; SUM_THLD=6.0 ;;
-        "16ms") CURRENT_VMIN=473; CURRENT_VMAX=769; LAMBDA_ATOM=16.67; SUM_THLD=5.0 ;;
-        "14ms") CURRENT_VMIN=473; CURRENT_VMAX=754; LAMBDA_ATOM=14.36; SUM_THLD=4.0 ;;
-        "12ms") CURRENT_VMIN=473; CURRENT_VMAX=731; LAMBDA_ATOM=12.33; SUM_THLD=3.5 ;;
-        "10ms") CURRENT_VMIN=473; CURRENT_VMAX=702; LAMBDA_ATOM=10.40; SUM_THLD=3.0 ;;
-        "8ms")  CURRENT_VMIN=473; CURRENT_VMAX=678; LAMBDA_ATOM=8.39;  SUM_THLD=2.5 ;;
-        "5ms")  CURRENT_VMIN=473; CURRENT_VMAX=647; LAMBDA_ATOM=6.44;  SUM_THLD=2.0 ;;
-        "4ms")  CURRENT_VMIN=473; CURRENT_VMAX=654; LAMBDA_ATOM=4.45;  SUM_THLD=1.5 ;;
+        "20ms") CURRENT_VMIN=473; CURRENT_VMAX=805; LAMBDA_ATOM=20.77; SUM_THLD=16.0 ;;
+        "16ms") CURRENT_VMIN=473; CURRENT_VMAX=769; LAMBDA_ATOM=16.67; SUM_THLD=13.0 ;;
+        "14ms") CURRENT_VMIN=473; CURRENT_VMAX=754; LAMBDA_ATOM=14.36; SUM_THLD=11.0 ;;
+        "12ms") CURRENT_VMIN=473; CURRENT_VMAX=731; LAMBDA_ATOM=12.33; SUM_THLD=9.5  ;;
+        "10ms") CURRENT_VMIN=473; CURRENT_VMAX=702; LAMBDA_ATOM=10.40; SUM_THLD=8.0  ;;
+        "8ms")  CURRENT_VMIN=473; CURRENT_VMAX=678; LAMBDA_ATOM=8.39;  SUM_THLD=6.5  ;;
+        "5ms")  CURRENT_VMIN=473; CURRENT_VMAX=647; LAMBDA_ATOM=6.44;  SUM_THLD=5.0  ;;
+        "4ms")  CURRENT_VMIN=473; CURRENT_VMAX=654; LAMBDA_ATOM=4.45;  SUM_THLD=3.5  ;;
         *) echo "Error: undefined TIME -> $TIME"; exit 1 ;;
     esac
 
     ROI_SIZE=5
-    LMBDA_PRIOR=0.1
+    LMBDA_PRIOR=1.0   # gentle prior on top of pre-trained DnCNN (warm-start)
+
+    # Warm-start from an already-trained learned checkpoint.
+    # This is essential: training prior from scratch causes DnCNN to freeze.
+    WARM_CKPT="./experiments/archive/n2nf_learned_only_${TIME}_last.pth"
 
     echo ""
     echo "=========================================="
     echo "Starting HYBRID-PRIOR training for: $TIME"
     echo "Norm: VMIN=$CURRENT_VMIN, VMAX=$CURRENT_VMAX"
     echo "Arch: sq|unc|unc|gain|unc|unc|gain|unc|unc|usq  (learned residual)"
+    echo "Warm-start from: ${WARM_CKPT}"
     echo "ROI-sum Poisson: λ_atom=${LAMBDA_ATOM}ph, sum_thld=${SUM_THLD}ph,"
     echo "                 roi=${ROI_SIZE}x${ROI_SIZE}, weight=${LMBDA_PRIOR}"
     echo "=========================================="
+
+    if [ ! -f "$WARM_CKPT" ]; then
+        echo "Error: warm-start checkpoint not found -> $WARM_CKPT"
+        echo "Run run_learned_many.sh first to produce the learned baseline."
+        exit 1
+    fi
 
     LOG_DIR_NAME="n2nf_hybrid_prior_${TIME}"
 
@@ -58,12 +70,13 @@ do
         exit 1
     fi
 
-    MIN_EPOCHS=200
-    MAX_EPOCHS=500
-    EARLY_STOP_PATIENCE=5
+    # Fine-tuning from warm-start: much shorter than full training
+    MIN_EPOCHS=50
+    MAX_EPOCHS=150
+    EARLY_STOP_PATIENCE=3
     EARLY_STOP_MIN_DELTA=0.0005
 
-    echo ">>> [${TIME}] hybrid (learned + ROI-sum Poisson), epochs=${MIN_EPOCHS}..${MAX_EPOCHS}"
+    echo ">>> [${TIME}] hybrid fine-tuning, epochs=${MIN_EPOCHS}..${MAX_EPOCHS}"
     python train_atom.py \
         --arch "sq|unc|unc|gain|unc|unc|gain|unc|unc|usq" \
         --epochs "$MAX_EPOCHS" \
@@ -83,6 +96,7 @@ do
         --lmbda 262144 \
         --dncnn_num_layers 25 \
         --no_resume \
+        --init_from "$WARM_CKPT" \
         --n_train_threads 0 \
         --vmin "$CURRENT_VMIN" \
         --vmax "$CURRENT_VMAX" \

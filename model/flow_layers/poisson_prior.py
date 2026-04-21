@@ -1,31 +1,48 @@
 """
-Exact continuous Poisson prior on DnCNN output.
+ROI-sum Poisson prior on DnCNN output.
 
-Not a flow layer in the invertible sense — just a negative-log-likelihood
-evaluator plugged into the training loss. Change-of-variables would give
-an equivalent Poisson-CDF flow, but differentiating gammaincc w.r.t. its
-first argument is nontrivial in PyTorch; the density form below is
-mathematically equivalent for gradient purposes and trivial to implement.
+Design:
+  At each pixel, compute the sum of x_hat over a (roi_size x roi_size) window
+  centered there (sliding-window sum via box-filter convolution). Detect
+  'atom candidates' as local maxima of this sum-map exceeding a threshold.
+  Apply a continuous Poisson NLL on the detected ROI sums with rate λ_atom
+  (= expected TOTAL photon count from one atom, i.e. the `<photon>` value
+  reported by make_fidelity_table.py).
 
-Ilienko continuous Poisson density:
-    p(x; lam) = lam^x * exp(-lam) / Gamma(x + 1),   x >= 0
-    -log p     = lam + log Gamma(x + 1) - x log lam
+Why ROI-sum instead of per-pixel:
+  The per-pixel rate is dominated by PSF shape — peak ~2-4 ph, halo ~0.1-0.8 ph.
+  A single per-pixel λ can't fit both. Integrating over the 5x5 ROI removes
+  this dependence: the TOTAL photon count ≈ atom emission rate, directly
+  modelable by Poisson(λ_atom).
+
+The selection (local-max + threshold) is non-differentiable by design —
+gradients flow only through the sum operation into x_hat, which is correct.
+
+NLL:  -log p(S; λ) = λ + log Γ(S + 1) - S · log λ,  S = ROI sum
 """
 
 import math
+
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class PoissonPrior(nn.Module):
-    """Negative log-likelihood of x_hat under continuous Poisson(lam).
+    """Continuous Poisson NLL on detected atom ROI sums.
 
-    Operates in photon units. The caller converts normalized / ADU
-    outputs to photons before calling forward().
+    Args:
+        lambda_init: expected ROI-sum photon count for an atom (e.g. 6.4 @ 5ms).
+        sum_threshold_photon: minimum ROI sum for a position to be counted
+            as an atom candidate. Keep ≥ 2 ph to reject background noise.
+        roi_size: window side length (default 5; matches make_fidelity_table DX/DY=2).
+        learnable: if True, λ is a free parameter.
     """
 
-    def __init__(self, lambda_init: float, learnable: bool = False,
-                 atom_threshold_photon: float = 1.5):
+    def __init__(self, lambda_init: float,
+                 sum_threshold_photon: float = 2.0,
+                 roi_size: int = 5,
+                 learnable: bool = False):
         super().__init__()
         log_lam = math.log(max(float(lambda_init), 1e-3))
         if learnable:
@@ -33,9 +50,15 @@ class PoissonPrior(nn.Module):
         else:
             self.register_buffer('log_lambda',
                                  torch.tensor(log_lam, dtype=torch.float32))
-        # Only apply prior where x_hat > threshold (photon units).
-        # Captures "atom-like" pixels and skips background.
-        self.atom_threshold_photon = float(atom_threshold_photon)
+        self.sum_threshold_photon = float(sum_threshold_photon)
+        self.roi_size = int(roi_size)
+        assert self.roi_size % 2 == 1, "roi_size must be odd"
+        self.half = self.roi_size // 2
+        # Box-filter kernel for sliding 5x5 sum (per-channel, in/out = 1).
+        self.register_buffer(
+            'box_kernel',
+            torch.ones(1, 1, self.roi_size, self.roi_size, dtype=torch.float32),
+        )
 
     @property
     def lam(self) -> torch.Tensor:
@@ -43,22 +66,33 @@ class PoissonPrior(nn.Module):
 
     def forward(self, x_hat_photon: torch.Tensor) -> torch.Tensor:
         """
-        x_hat_photon: (B, C, H, W) in photon units (already bg-subtracted
-                      and bias-free).
-        Returns scalar mean NLL over atom-mask pixels.
-        If no atom-mask pixels in batch, returns 0.
+        x_hat_photon: (B, 1, H, W) in photon units. Must already be bg-subtracted
+                      (vmin ≈ background in the upstream normalization).
+        Returns mean Poisson NLL over all detected atom ROIs in the batch.
+        If no ROI is detected, returns 0.
         """
-        lam = self.lam
-        # Mask atom-like pixels dynamically from the denoiser output itself.
-        # Self-consistent: the denoiser declares what's an atom; prior calibrates it.
-        atom_mask = x_hat_photon > self.atom_threshold_photon
-        n_atom = atom_mask.sum()
+        # 1. Sliding ROI sum via conv: roi_sum[b,0,y,x] = Σ_{5x5 around (y,x)} x_hat
+        roi_sum = F.conv2d(x_hat_photon, self.box_kernel, padding=self.half)
+
+        # 2. Non-max suppression: keep positions where roi_sum is a local max
+        #    within a roi_size neighborhood.
+        pooled = F.max_pool2d(roi_sum,
+                              kernel_size=self.roi_size,
+                              stride=1,
+                              padding=self.half)
+        is_local_max = (roi_sum == pooled)
+
+        # 3. Threshold on the ROI sum itself (reject faint / noise-only peaks).
+        is_atom = is_local_max & (roi_sum > self.sum_threshold_photon)
+
+        n_atom = is_atom.sum()
         if n_atom.item() == 0:
             return x_hat_photon.new_zeros(())
 
-        x_atom = x_hat_photon[atom_mask]
-        # Guard against accidental negatives leaking through (clip=False path).
-        x_atom = torch.clamp(x_atom, min=0.0)
-        # -log p(x; lam) = lam + log Gamma(x + 1) - x log lam
-        nll = lam + torch.lgamma(x_atom + 1.0) - x_atom * torch.log(lam)
+        atom_sums = roi_sum[is_atom]
+        # Guard against tiny sums causing log(0); clamp above zero.
+        atom_sums = torch.clamp(atom_sums, min=1e-3)
+
+        lam = self.lam
+        nll = lam + torch.lgamma(atom_sums + 1.0) - atom_sums * torch.log(lam)
         return nll.mean()

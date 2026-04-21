@@ -98,18 +98,25 @@ def arg_parser():
     parser.add_argument('--basden_sensitivity', type=float, default=4.15, help='Sensitivity (e-/ADU) for Basden layer')
     parser.add_argument('--basden_cic_lambda', type=float, default=0.0306, help='CIC lambda for Basden layer')
 
-    # Poisson prior on x_hat (atom-only mask, second NLL term)
+    # Poisson prior on x_hat (ROI-sum Poisson, atom-only)
     # Off by default — existing training paths are byte-for-byte identical
     # unless --use_prior_flow is passed AND --lmbda_prior > 0.
     parser.add_argument('--use_prior_flow', action='store_true', default=False,
-                        help="Enable continuous-Poisson prior on DnCNN output "
-                             "for atom-like pixels (identified by photon threshold).")
+                        help="Enable ROI-sum Poisson prior on DnCNN output. "
+                             "Atom candidates are detected as local maxima of "
+                             "the 5x5 box-filter sum above --prior_sum_threshold.")
     parser.add_argument('--prior_lambda_atom', type=float, default=6.4,
-                        help='Expected atom photon count (rate) for Poisson prior. '
-                             'Supply per-exposure value (e.g. 4ms~4.4, 5ms~6.4, 8ms~8.4).')
-    parser.add_argument('--prior_atom_threshold_photon', type=float, default=1.5,
-                        help='Photon threshold on x_hat to identify atom pixels '
-                             'for prior application.')
+                        help='Expected ROI-SUM photon count per atom (rate of '
+                             'the Poisson). Use the <photon> column from '
+                             'make_fidelity_table (e.g. 4ms~4.45, 5ms~6.44, '
+                             '8ms~8.39, 20ms~20.77).')
+    parser.add_argument('--prior_sum_threshold_photon', type=float, default=2.0,
+                        help='Minimum ROI sum (photons) for a position to be '
+                             'counted as an atom candidate. Keep ≥ ~0.3·λ_atom '
+                             'to reject bg fluctuations while still catching '
+                             'dimly-reconstructed atoms.')
+    parser.add_argument('--prior_roi_size', type=int, default=5,
+                        help='ROI side length for sliding sum (must be odd).')
     parser.add_argument('--prior_lambda_learnable', action='store_true', default=False,
                         help='Make prior_lambda_atom trainable (default: fixed).')
     parser.add_argument('--lmbda_prior', type=float, default=0.0,

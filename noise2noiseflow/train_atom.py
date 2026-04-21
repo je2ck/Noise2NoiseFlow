@@ -432,7 +432,8 @@ def build_model_and_optimizer(hps) -> Tuple[Noise2NoiseFlow, torch.optim.Optimiz
             'enabled': True,
             'lmbda_prior': float(hps.lmbda_prior),
             'lambda_atom': float(hps.prior_lambda_atom),
-            'atom_threshold_photon': float(hps.prior_atom_threshold_photon),
+            'sum_threshold_photon': float(hps.prior_sum_threshold_photon),
+            'roi_size': int(hps.prior_roi_size),
             'learnable': bool(getattr(hps, 'prior_lambda_learnable', False)),
             'vmin': float(hps.vmin),
             'vmax': float(hps.vmax),
@@ -440,10 +441,11 @@ def build_model_and_optimizer(hps) -> Tuple[Noise2NoiseFlow, torch.optim.Optimiz
             'em_gain': float(hps.basden_em_gain),
         }
         logging.info(
-            "[prior] Poisson prior ENABLED: λ_atom=%.3f, threshold=%.3f ph, "
-            "weight=%.3f, learnable=%s",
+            "[prior] ROI-sum Poisson prior ENABLED: λ_atom=%.3f ph (ROI sum), "
+            "sum_threshold=%.3f ph, roi_size=%d, weight=%.3f, learnable=%s",
             prior_cfg['lambda_atom'],
-            prior_cfg['atom_threshold_photon'],
+            prior_cfg['sum_threshold_photon'],
+            prior_cfg['roi_size'],
             prior_cfg['lmbda_prior'],
             prior_cfg['learnable'],
         )

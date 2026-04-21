@@ -47,8 +47,9 @@ class Noise2NoiseFlow(nn.Module):
         if prior_cfg is not None and prior_cfg.get('enabled', False):
             self.prior_flow = PoissonPrior(
                 lambda_init=prior_cfg['lambda_atom'],
+                sum_threshold_photon=prior_cfg.get('sum_threshold_photon', 2.0),
+                roi_size=prior_cfg.get('roi_size', 5),
                 learnable=prior_cfg.get('learnable', False),
-                atom_threshold_photon=prior_cfg.get('atom_threshold_photon', 1.5),
             )
             self.lmbda_prior = float(prior_cfg.get('lmbda_prior', 0.0))
             self._photon_scale = float(

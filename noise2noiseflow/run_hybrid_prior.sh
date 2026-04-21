@@ -1,15 +1,16 @@
 #!/bin/bash
 #
-# Learned residual flow + continuous-Poisson prior on DnCNN output.
-# Residual flow arch is UNCHANGED (sq|unc|unc|gain|unc|unc|gain|unc|unc|usq);
-# adds a second NLL term on x_hat for atom-like pixels.
+# Learned residual flow + ROI-sum Poisson prior on DnCNN output.
+# Residual flow arch is UNCHANGED (sq|unc|unc|gain|unc|unc|gain|unc|unc|usq).
 #
-# λ_atom per exposure = mean atom photon count (from fidelity table).
-# λ_prior = 0.1 gives the Poisson term ~0.1× weight of residual NLL.
+# Prior design:
+#   - Detect atom candidates as local maxima of the 5x5 sliding sum exceeding
+#     `--prior_sum_threshold_photon`.
+#   - Apply continuous Poisson NLL with rate λ_atom = expected TOTAL photon
+#     count per atom (the <photon> column from make_fidelity_table.py).
 #
-# Turn this run OFF without touching the code: drop `--use_prior_flow` or set
-# `--lmbda_prior 0`. Existing run_learned_many.sh / run_basden_many.sh are
-# untouched.
+# Turn off without editing code: drop `--use_prior_flow` or set `--lmbda_prior 0`.
+# Existing run_learned_many.sh / run_basden_many.sh are untouched.
 #
 
 set -e
@@ -21,24 +22,23 @@ LOG_ROOT="experiments/paper"
 
 for TIME in "${TIMES[@]}"
 do
-    # Normalization + expected atom photon rate per exposure.
-    # λ_atom ≈ mean_photon from make_fidelity_table.py
+    # Normalization + expected atom ROI-sum photon rate per exposure.
+    # LAMBDA_ATOM = mean_photon from make_fidelity_table.py
+    # SUM_THLD = ~0.3 × LAMBDA_ATOM (reject bg fluctuations but catch
+    #           dimly reconstructed atoms early in training)
     case "$TIME" in
-        "20ms") CURRENT_VMIN=473; CURRENT_VMAX=805; LAMBDA_ATOM=20.77 ;;
-        "16ms") CURRENT_VMIN=473; CURRENT_VMAX=769; LAMBDA_ATOM=16.67 ;;
-        "14ms") CURRENT_VMIN=473; CURRENT_VMAX=754; LAMBDA_ATOM=14.36 ;;
-        "12ms") CURRENT_VMIN=473; CURRENT_VMAX=731; LAMBDA_ATOM=12.33 ;;
-        "10ms") CURRENT_VMIN=473; CURRENT_VMAX=702; LAMBDA_ATOM=10.40 ;;
-        "8ms")  CURRENT_VMIN=473; CURRENT_VMAX=678; LAMBDA_ATOM=8.39 ;;
-        "5ms")  CURRENT_VMIN=473; CURRENT_VMAX=647; LAMBDA_ATOM=6.44 ;;
-        "4ms")  CURRENT_VMIN=473; CURRENT_VMAX=654; LAMBDA_ATOM=4.45 ;;
+        "20ms") CURRENT_VMIN=473; CURRENT_VMAX=805; LAMBDA_ATOM=20.77; SUM_THLD=6.0 ;;
+        "16ms") CURRENT_VMIN=473; CURRENT_VMAX=769; LAMBDA_ATOM=16.67; SUM_THLD=5.0 ;;
+        "14ms") CURRENT_VMIN=473; CURRENT_VMAX=754; LAMBDA_ATOM=14.36; SUM_THLD=4.0 ;;
+        "12ms") CURRENT_VMIN=473; CURRENT_VMAX=731; LAMBDA_ATOM=12.33; SUM_THLD=3.5 ;;
+        "10ms") CURRENT_VMIN=473; CURRENT_VMAX=702; LAMBDA_ATOM=10.40; SUM_THLD=3.0 ;;
+        "8ms")  CURRENT_VMIN=473; CURRENT_VMAX=678; LAMBDA_ATOM=8.39;  SUM_THLD=2.5 ;;
+        "5ms")  CURRENT_VMIN=473; CURRENT_VMAX=647; LAMBDA_ATOM=6.44;  SUM_THLD=2.0 ;;
+        "4ms")  CURRENT_VMIN=473; CURRENT_VMAX=654; LAMBDA_ATOM=4.45;  SUM_THLD=1.5 ;;
         *) echo "Error: undefined TIME -> $TIME"; exit 1 ;;
     esac
 
-    # Atom detection threshold in photon units. 1.5 photons works for all
-    # exposures: well above 1σ photon shot noise of background, below the
-    # smallest atom mean (4.45 at 4ms).
-    ATOM_THLD_PHOTON=1.5
+    ROI_SIZE=5
     LMBDA_PRIOR=0.1
 
     echo ""
@@ -46,7 +46,8 @@ do
     echo "Starting HYBRID-PRIOR training for: $TIME"
     echo "Norm: VMIN=$CURRENT_VMIN, VMAX=$CURRENT_VMAX"
     echo "Arch: sq|unc|unc|gain|unc|unc|gain|unc|unc|usq  (learned residual)"
-    echo "Prior: Poisson(λ=${LAMBDA_ATOM}), thld=${ATOM_THLD_PHOTON} ph, weight=${LMBDA_PRIOR}"
+    echo "ROI-sum Poisson: λ_atom=${LAMBDA_ATOM}ph, sum_thld=${SUM_THLD}ph,"
+    echo "                 roi=${ROI_SIZE}x${ROI_SIZE}, weight=${LMBDA_PRIOR}"
     echo "=========================================="
 
     LOG_DIR_NAME="n2nf_hybrid_prior_${TIME}"
@@ -62,7 +63,7 @@ do
     EARLY_STOP_PATIENCE=5
     EARLY_STOP_MIN_DELTA=0.0005
 
-    echo ">>> [${TIME}] hybrid (learned + Poisson prior), epochs=${MIN_EPOCHS}..${MAX_EPOCHS}"
+    echo ">>> [${TIME}] hybrid (learned + ROI-sum Poisson), epochs=${MIN_EPOCHS}..${MAX_EPOCHS}"
     python train_atom.py \
         --arch "sq|unc|unc|gain|unc|unc|gain|unc|unc|usq" \
         --epochs "$MAX_EPOCHS" \
@@ -87,7 +88,8 @@ do
         --vmax "$CURRENT_VMAX" \
         --use_prior_flow \
         --prior_lambda_atom "$LAMBDA_ATOM" \
-        --prior_atom_threshold_photon "$ATOM_THLD_PHOTON" \
+        --prior_sum_threshold_photon "$SUM_THLD" \
+        --prior_roi_size "$ROI_SIZE" \
         --lmbda_prior "$LMBDA_PRIOR"
 
     sleep 60

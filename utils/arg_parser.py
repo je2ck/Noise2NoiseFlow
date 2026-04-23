@@ -119,8 +119,13 @@ def arg_parser():
                         help='ROI side length for sliding sum (must be odd).')
     parser.add_argument('--prior_lambda_learnable', action='store_true', default=False,
                         help='Make prior_lambda_atom trainable (default: fixed).')
+    parser.add_argument('--prior_mode', type=str, default='poisson_nll',
+                        choices=['poisson_nll', 'l2'],
+                        help="Loss form on detected ROI sums: 'poisson_nll' "
+                             "(continuous Poisson NLL) or 'l2' (squared error "
+                             "regression toward lambda_atom; stronger gradient).")
     parser.add_argument('--lmbda_prior', type=float, default=0.0,
-                        help='Weight for Poisson prior NLL in total loss. '
+                        help='Weight for prior loss term in total. '
                              '0 disables the prior even if --use_prior_flow set.')
 
     hps = parser.parse_args()  # So error if typo

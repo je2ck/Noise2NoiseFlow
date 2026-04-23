@@ -128,32 +128,33 @@ thompson_yb = {
 }
 
 # --- 3. Execution & Visualization ---
-plt.rcParams.update({'font.size': 12, 'font.family': 'sans-serif'})
-SNR_TARGET = 2.63
+if __name__ == "__main__":
+    plt.rcParams.update({'font.size': 12, 'font.family': 'sans-serif'})
+    SNR_TARGET = 2.63
 
-# configs = [cfg_556, cfg_399, cfg_cs]
-configs = [cfg_556]
+    # configs = [cfg_556, cfg_399, cfg_cs]
+    configs = [cfg_556]
 
-for cfg in configs:
-    # 1. Calculate Efficiency
-    eta_geo, eta_tot = get_efficiency(cfg['NA'], cfg['T_optics'], cfg['QE'])
+    for cfg in configs:
+        # 1. Calculate Efficiency
+        eta_geo, eta_tot = get_efficiency(cfg['NA'], cfg['T_optics'], cfg['QE'])
 
-    # 2. Calculate Scattering Rate
-    R_sc = calculate_scattering_rate(cfg['Gamma'], cfg['Delta'], cfg['s'])
+        # 2. Calculate Scattering Rate
+        R_sc = calculate_scattering_rate(cfg['Gamma'], cfg['Delta'], cfg['s'])
 
-    print(f"\n[{cfg['name']} Analysis]")
-    print(f" - Efficiency: {eta_tot*100:.2f}% (NA={cfg['NA']}, T={cfg['T_optics']}, QE={cfg['QE']})")
-    print(f" - Scattering Rate: {R_sc:.2e} photons/s")
+        print(f"\n[{cfg['name']} Analysis]")
+        print(f" - Efficiency: {eta_tot*100:.2f}% (NA={cfg['NA']}, T={cfg['T_optics']}, QE={cfg['QE']})")
+        print(f" - Scattering Rate: {R_sc:.2e} photons/s")
 
-    # 3. Plot
-    fig, (ax_v, ax_s) = plt.subplots(2, 1, figsize=(8, 8), sharex=True)
-    fig.suptitle(f"{cfg['name']} Imaging Performance (SNR={SNR_TARGET})\n(NA={cfg['NA']}, T={cfg['T_optics']}, QE={cfg['QE']})", fontsize=14)
+        # 3. Plot
+        fig, (ax_v, ax_s) = plt.subplots(2, 1, figsize=(8, 8), sharex=True)
+        fig.suptitle(f"{cfg['name']} Imaging Performance (SNR={SNR_TARGET})\n(NA={cfg['NA']}, T={cfg['T_optics']}, QE={cfg['QE']})", fontsize=14)
 
-    t_min = plot_performance(ax_v, ax_s, cfg, R_sc, eta_tot, SNR_TARGET)
+        t_min = plot_performance(ax_v, ax_s, cfg, R_sc, eta_tot, SNR_TARGET)
 
-    print(f" -> Required Exposure: {t_min * cfg['scale_factor']:.3f} {cfg['unit']}")
+        print(f" -> Required Exposure: {t_min * cfg['scale_factor']:.3f} {cfg['unit']}")
 
-    plt.tight_layout()
-    # plt.savefig(f"{cfg['name'].replace(' ', '_')}_Analysis.png", dpi=150)
+        plt.tight_layout()
+        # plt.savefig(f"{cfg['name'].replace(' ', '_')}_Analysis.png", dpi=150)
 
-plt.show()
+    plt.show()

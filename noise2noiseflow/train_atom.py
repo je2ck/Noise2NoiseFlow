@@ -435,14 +435,16 @@ def build_model_and_optimizer(hps) -> Tuple[Noise2NoiseFlow, torch.optim.Optimiz
             'sum_threshold_photon': float(hps.prior_sum_threshold_photon),
             'roi_size': int(hps.prior_roi_size),
             'learnable': bool(getattr(hps, 'prior_lambda_learnable', False)),
+            'mode': str(getattr(hps, 'prior_mode', 'poisson_nll')),
             'vmin': float(hps.vmin),
             'vmax': float(hps.vmax),
             'sensitivity': float(hps.basden_sensitivity),
             'em_gain': float(hps.basden_em_gain),
         }
         logging.info(
-            "[prior] ROI-sum Poisson prior ENABLED: λ_atom=%.3f ph (ROI sum), "
+            "[prior] ROI-sum prior ENABLED: mode=%s, λ_atom=%.3f ph (ROI sum), "
             "sum_threshold=%.3f ph, roi_size=%d, weight=%.3f, learnable=%s",
+            prior_cfg['mode'],
             prior_cfg['lambda_atom'],
             prior_cfg['sum_threshold_photon'],
             prior_cfg['roi_size'],

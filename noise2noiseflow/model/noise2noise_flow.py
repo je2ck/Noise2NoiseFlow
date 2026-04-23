@@ -50,6 +50,7 @@ class Noise2NoiseFlow(nn.Module):
                 sum_threshold_photon=prior_cfg.get('sum_threshold_photon', 2.0),
                 roi_size=prior_cfg.get('roi_size', 5),
                 learnable=prior_cfg.get('learnable', False),
+                mode=prior_cfg.get('mode', 'poisson_nll'),
             )
             self.lmbda_prior = float(prior_cfg.get('lmbda_prior', 0.0))
             self._photon_scale = float(

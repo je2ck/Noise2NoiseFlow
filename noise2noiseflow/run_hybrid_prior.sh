@@ -40,7 +40,12 @@ do
     esac
 
     ROI_SIZE=5
-    LMBDA_PRIOR=1.0   # gentle prior on top of pre-trained DnCNN (warm-start)
+    PRIOR_MODE="l2"   # 'l2' (regression, strong gradient) or 'poisson_nll'
+    # With L2 mode, gradient = 2·(S-λ) per ROI pixel — far stronger AND
+    # linear in |S-λ| (vs Poisson's logarithmically-bounded digamma).
+    # Previous attempts with Poisson at λ_prior=1 did nothing (gradient too
+    # weak). Keep LMBDA_PRIOR at same order so L2's 11× advantage survives.
+    LMBDA_PRIOR=100.0
 
     # Warm-start from an already-trained learned checkpoint.
     # This is essential: training prior from scratch causes DnCNN to freeze.
@@ -104,6 +109,7 @@ do
         --prior_lambda_atom "$LAMBDA_ATOM" \
         --prior_sum_threshold_photon "$SUM_THLD" \
         --prior_roi_size "$ROI_SIZE" \
+        --prior_mode "$PRIOR_MODE" \
         --lmbda_prior "$LMBDA_PRIOR"
 
     sleep 60

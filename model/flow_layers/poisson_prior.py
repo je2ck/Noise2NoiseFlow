@@ -29,7 +29,14 @@ import torch.nn.functional as F
 
 
 class PoissonPrior(nn.Module):
-    """Continuous Poisson NLL on detected atom ROI sums.
+    """Prior on detected atom ROI sums. Two modes:
+        - 'poisson_nll': continuous Poisson NLL
+                         ℓ = λ + log Γ(S+1) - S log λ
+        - 'l2':          squared-error regression
+                         ℓ = (S - λ)^2
+
+    L2 provides much stronger gradient far from λ (linear in |S-λ|)
+    vs Poisson (digamma-bounded, gets weaker as S → 0).
 
     Args:
         lambda_init: expected ROI-sum photon count for an atom (e.g. 6.4 @ 5ms).
@@ -37,12 +44,14 @@ class PoissonPrior(nn.Module):
             as an atom candidate. Keep ≥ 2 ph to reject background noise.
         roi_size: window side length (default 5; matches make_fidelity_table DX/DY=2).
         learnable: if True, λ is a free parameter.
+        mode: 'poisson_nll' (default) or 'l2'.
     """
 
     def __init__(self, lambda_init: float,
                  sum_threshold_photon: float = 2.0,
                  roi_size: int = 5,
-                 learnable: bool = False):
+                 learnable: bool = False,
+                 mode: str = 'poisson_nll'):
         super().__init__()
         log_lam = math.log(max(float(lambda_init), 1e-3))
         if learnable:
@@ -54,6 +63,8 @@ class PoissonPrior(nn.Module):
         self.roi_size = int(roi_size)
         assert self.roi_size % 2 == 1, "roi_size must be odd"
         self.half = self.roi_size // 2
+        assert mode in ('poisson_nll', 'l2'), f"Unknown prior mode: {mode}"
+        self.mode = mode
         # Box-filter kernel for sliding 5x5 sum (per-channel, in/out = 1).
         self.register_buffer(
             'box_kernel',
@@ -68,7 +79,7 @@ class PoissonPrior(nn.Module):
         """
         x_hat_photon: (B, 1, H, W) in photon units. Must already be bg-subtracted
                       (vmin ≈ background in the upstream normalization).
-        Returns mean Poisson NLL over all detected atom ROIs in the batch.
+        Returns mean prior loss over all detected atom ROIs in the batch.
         If no ROI is detected, returns 0.
         """
         # 1. Sliding ROI sum via conv: roi_sum[b,0,y,x] = Σ_{5x5 around (y,x)} x_hat
@@ -90,9 +101,11 @@ class PoissonPrior(nn.Module):
             return x_hat_photon.new_zeros(())
 
         atom_sums = roi_sum[is_atom]
-        # Guard against tiny sums causing log(0); clamp above zero.
-        atom_sums = torch.clamp(atom_sums, min=1e-3)
-
         lam = self.lam
-        nll = lam + torch.lgamma(atom_sums + 1.0) - atom_sums * torch.log(lam)
-        return nll.mean()
+
+        if self.mode == 'l2':
+            loss = (atom_sums - lam) ** 2
+        else:  # poisson_nll
+            atom_sums = torch.clamp(atom_sums, min=1e-3)
+            loss = lam + torch.lgamma(atom_sums + 1.0) - atom_sums * torch.log(lam)
+        return loss.mean()

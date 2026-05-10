@@ -19,7 +19,12 @@ from pathlib import Path
 import numpy as np
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+_HERE = Path(__file__).resolve().parent
+# `model/` is a namespace package split across `noise2noiseflow/model/`
+# (NoiseFlow class) and `Noise2NoiseFlow/model/` (flow_layers/, dncnn, …).
+# Both parents must be on sys.path for the merge to work.
+sys.path.insert(0, str(_HERE))
+sys.path.insert(0, str(_HERE.parent))
 from model.noise_flow import NoiseFlow
 
 ARCH = "sq|unc|unc|gain|unc|unc|gain|unc|unc|usq"

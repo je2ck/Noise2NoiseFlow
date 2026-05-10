@@ -1,0 +1,42 @@
+GPU      : NVIDIA GeForce RTX 5090
+PyTorch  : 2.9.0+cu128
+CUDA     : 12.8
+ckpt     : /home/jibae/research/Noise2NoiseFlow/noise2noiseflow/experiments/archive/n2nf_learned_only_8ms_last.pth
+arch     : sq|unc|unc|gain|unc|unc|gain|unc|unc|usq
+batch    : 1
+warmup   : 10, repeat: 50
+
+|-Squeeze   in=[1, 64, 64] -> out=[4, 32, 32]
+|-Conv2d1x1 (C=4)
+|-AffineCoupling (C=4)
+|-Conv2d1x1 (C=4)
+|-AffineCoupling (C=4)
+|-Gain
+|-Conv2d1x1 (C=4)
+|-AffineCoupling (C=4)
+|-Conv2d1x1 (C=4)
+|-AffineCoupling (C=4)
+|-Gain
+|-Conv2d1x1 (C=4)
+|-AffineCoupling (C=4)
+|-Conv2d1x1 (C=4)
+|-AffineCoupling (C=4)
+|-Unsqueeze in=[4, 32, 32] -> out=[1, 64, 64]
+  [warn] missing keys: 152 (first: ['model.1.l', 'model.1.log_s', 'model.1.u'])
+  [warn] unexpected keys: 3 (first: ['epoch_num', 'state_dict', 'optimizer'])
+learned NoiseFlow params: 2,024
+
+ size     MB |         H2D ms   GB/s |         fwd ms  us/kpix |         D2H ms   GB/s |  peak MB
+--------------------------------------------------------------------------------------------------------------
+   32   0.00 |   0.012±0.015  0.32 |   2.666±0.293 2603.86 |   0.013±0.021  0.30 |     8.2
+   64   0.02 |   0.013±0.019  1.16 |   2.763±0.254  674.60 |   0.013±0.018  1.14 |     8.3
+   96   0.04 |   0.013±0.012  2.74 |   2.686±0.284  291.49 |   0.014±0.018  2.40 |     8.4
+  128   0.06 |   0.012±0.023  4.97 |   2.669±0.233  162.91 |   0.011±0.014  5.39 |     8.6
+  192   0.14 |   0.013±0.015 10.73 |   2.765±0.243   75.01 |   0.044±0.206  3.10 |     9.0
+  256   0.25 |   0.016±0.019 15.62 |   2.605±0.214   39.75 |   0.018±0.022 13.77 |     9.7
+  384   0.56 |   0.017±0.018 31.55 |   2.691±0.342   18.25 |   0.149±0.389  3.69 |    11.6
+  512   1.00 |   0.022±0.001 43.87 |   2.698±0.191   10.29 |   0.056±0.188 17.39 |    14.2
+  768   2.25 |   0.046±0.000 47.75 |   2.899±1.136    4.92 |   0.456±0.798  4.81 |    22.3
+ 1024   4.00 |   0.081±0.001 48.09 |   2.737±0.165    2.61 |   0.194±0.293 20.15 |    32.2
+
+saved CSV: /home/jibae/research/Noise2NoiseFlow/noise2noiseflow/benchmark_learned_noiseflow_8ms.csv

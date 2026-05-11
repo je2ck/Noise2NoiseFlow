@@ -2,41 +2,24 @@ GPU      : NVIDIA GeForce RTX 5090
 PyTorch  : 2.9.0+cu128
 CUDA     : 12.8
 ckpt     : /home/jibae/research/Noise2NoiseFlow/noise2noiseflow/experiments/archive/n2nf_learned_only_8ms_last.pth
-arch     : sq|unc|unc|gain|unc|unc|gain|unc|unc|usq
+target   : DnCNN (inference path; NoiseFlow head not run)
+channels : 2, layers: 25
 batch    : 1
 warmup   : 10, repeat: 50
 
-|-Squeeze   in=[1, 64, 64] -> out=[4, 32, 32]
-|-Conv2d1x1 (C=4)
-|-AffineCoupling (C=4)
-|-Conv2d1x1 (C=4)
-|-AffineCoupling (C=4)
-|-Gain
-|-Conv2d1x1 (C=4)
-|-AffineCoupling (C=4)
-|-Conv2d1x1 (C=4)
-|-AffineCoupling (C=4)
-|-Gain
-|-Conv2d1x1 (C=4)
-|-AffineCoupling (C=4)
-|-Conv2d1x1 (C=4)
-|-AffineCoupling (C=4)
-|-Unsqueeze in=[4, 32, 32] -> out=[1, 64, 64]
-  [warn] missing keys: 152 (first: ['model.1.l', 'model.1.log_s', 'model.1.u'])
-  [warn] unexpected keys: 3 (first: ['epoch_num', 'state_dict', 'optimizer'])
-learned NoiseFlow params: 2,024
+DnCNN params: 853,184
 
- size     MB |         H2D ms   GB/s |         fwd ms  us/kpix |         D2H ms   GB/s |  peak MB
+ size     MB |         H2D ms   GB/s |       DnCNN ms  us/kpix |         D2H ms   GB/s |  peak MB
 --------------------------------------------------------------------------------------------------------------
-   32   0.00 |   0.012±0.015  0.32 |   2.666±0.293 2603.86 |   0.013±0.021  0.30 |     8.2
-   64   0.02 |   0.013±0.019  1.16 |   2.763±0.254  674.60 |   0.013±0.018  1.14 |     8.3
-   96   0.04 |   0.013±0.012  2.74 |   2.686±0.284  291.49 |   0.014±0.018  2.40 |     8.4
-  128   0.06 |   0.012±0.023  4.97 |   2.669±0.233  162.91 |   0.011±0.014  5.39 |     8.6
-  192   0.14 |   0.013±0.015 10.73 |   2.765±0.243   75.01 |   0.044±0.206  3.10 |     9.0
-  256   0.25 |   0.016±0.019 15.62 |   2.605±0.214   39.75 |   0.018±0.022 13.77 |     9.7
-  384   0.56 |   0.017±0.018 31.55 |   2.691±0.342   18.25 |   0.149±0.389  3.69 |    11.6
-  512   1.00 |   0.022±0.001 43.87 |   2.698±0.191   10.29 |   0.056±0.188 17.39 |    14.2
-  768   2.25 |   0.046±0.000 47.75 |   2.899±1.136    4.92 |   0.456±0.798  4.81 |    22.3
- 1024   4.00 |   0.081±0.001 48.09 |   2.737±0.165    2.61 |   0.194±0.293 20.15 |    32.2
+   32   0.01 |   0.013±0.015  0.60 |   0.947±0.104  924.45 |   0.017±0.042  0.46 |     4.5
+   64   0.03 |   0.009±0.014  3.26 |   1.021±0.053  249.24 |   0.014±0.016  2.17 |     7.5
+   96   0.07 |   0.012±0.013  5.78 |   1.107±0.110  120.12 |   0.014±0.020  4.99 |    12.6
+  128   0.12 |   0.011±0.014 10.71 |   1.192±0.044   72.72 |   0.016±0.020  7.80 |    19.7
+  192   0.28 |   0.013±0.016 21.48 |   1.833±0.031   49.72 |   0.105±0.367  2.62 |    40.0
+  256   0.50 |   0.019±0.022 25.70 |   2.708±0.012   41.32 |   0.051±0.202  9.57 |    68.4
+  384   1.12 |   0.024±0.001 45.18 |   5.718±0.115   38.78 |   0.256±0.487  4.29 |   149.7
+  512   2.00 |   0.041±0.000 47.44 |  13.441±0.170   51.27 |   0.135±0.279 14.44 |   263.4
+  768   4.50 |   0.091±0.006 48.24 |  35.591±0.287   60.34 |   0.821±1.336  5.35 |   588.4
+ 1024   8.00 |   0.161±0.012 48.59 |  63.822±0.448   60.87 |   0.345±0.446 22.63 |  1043.4
 
-saved CSV: /home/jibae/research/Noise2NoiseFlow/noise2noiseflow/benchmark_learned_noiseflow_8ms.csv
+saved CSV: /home/jibae/research/Noise2NoiseFlow/noise2noiseflow/benchmark_dncnn_inference_8ms.csv
